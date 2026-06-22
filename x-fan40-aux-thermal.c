@@ -28,6 +28,11 @@
 // state the aux zone could demand at the current aux_temp_mc.  If fan_state
 // exceeds that maximum, the CPU zone must be responsible.
 //
+// Fan detection: at probe the fan is spun up briefly at a fixed duty cycle
+// and the tachometer is read after one poll interval.  If RPM > 0 the fan is
+// present and normal thermal control proceeds; otherwise fan control is
+// disabled for the life of the module instance.
+//
 // Module parameters:
 //   poll_ms  - poll interval in milliseconds (default: 1000)
 //
@@ -44,6 +49,7 @@
 #include <linux/slab.h>
 #include <linux/workqueue.h>
 #include <linux/fs.h>
+#include <linux/string.h>
 
 #define POLL_MS_DEFAULT      1000
 #define SAFE_TEMP_MC         25000  /* 25 °C — below all trip points */
@@ -80,6 +86,12 @@ struct aux_sensor_data {
     int  fan_state;                       /* actual pwm-fan cur_state */
     char fan_driver_name[MAX_NAME_LEN];   /* "cpu", source name, or "none" */
     char fan_cdev_state_path[MAX_CDEV_PATH_LEN];
+
+    /* Fan detection — performed once at startup */
+    bool fan_present;
+    bool fan_detecting;
+    int  detect_count;
+    char fan_hwmon_dir[MAX_CDEV_PATH_LEN]; /* "/sys/class/hwmon/hwmonX" */
 
     /* Aux zone trip temperatures, read from sysfs after zone registration */
     int  aux_trip_lo_temp;   /* milli-Celsius; default 55000 */
@@ -157,6 +169,20 @@ static ssize_t read_str_from_sysfs(const char *path, char *buf, size_t len)
         strim(buf);
     }
     return n;
+}
+
+static void write_int_to_sysfs(const char *path, int val)
+{
+    struct file *f;
+    char buf[16];
+    loff_t pos = 0;
+
+    f = filp_open(path, O_WRONLY, 0);
+    if (IS_ERR(f))
+        return;
+    snprintf(buf, sizeof(buf), "%d\n", val);
+    kernel_write(f, buf, strlen(buf), &pos);
+    filp_close(f, NULL);
 }
 
 /* ── Source path discovery ───────────────────────────────────────────────── */
@@ -243,6 +269,32 @@ static void discover_fan_cdev(struct aux_sensor_data *d)
     dev_warn(d->dev, "pwm-fan cooling device not found\n");
 }
 
+/*
+ * Find the X-FAN40 hwmon device by scanning the pwm-fan platform device's
+ * own hwmon directory.  This avoids confusing it with the Pi 5's built-in
+ * cooling_fan, which is also named "pwmfan" in /sys/class/hwmon.
+ */
+static void discover_fan_hwmon(struct aux_sensor_data *d)
+{
+    char path[MAX_CDEV_PATH_LEN];
+    char name_buf[16];
+    int n;
+
+    for (n = 0; n <= 15; n++) {
+        snprintf(path, sizeof(path),
+                 "/sys/devices/platform/pwm-fan/hwmon/hwmon%d/name", n);
+        if (read_str_from_sysfs(path, name_buf, sizeof(name_buf)) <= 0)
+            continue;
+        if (strcmp(name_buf, "pwmfan") != 0)
+            continue;
+        snprintf(d->fan_hwmon_dir, sizeof(d->fan_hwmon_dir),
+                 "/sys/devices/platform/pwm-fan/hwmon/hwmon%d", n);
+        dev_info(d->dev, "fan hwmon: hwmon%d\n", n);
+        return;
+    }
+    dev_warn(d->dev, "x-fan40 hwmon device not found; skipping fan detection\n");
+}
+
 /* ── Aux zone trip point discovery ───────────────────────────────────────── */
 
 /*
@@ -303,6 +355,36 @@ static void aux_poll_fn(struct work_struct *work)
     int max_idx = -1;
     int i;
 
+    /* ── Fan detection (runs for the first two poll cycles) ── */
+    if (d->fan_detecting) {
+        char path[MAX_CDEV_PATH_LEN];
+
+        if (d->detect_count == 0) {
+            snprintf(path, sizeof(path), "%s/pwm1_enable", d->fan_hwmon_dir);
+            write_int_to_sysfs(path, 1);   /* switch to manual control */
+            snprintf(path, sizeof(path), "%s/pwm1", d->fan_hwmon_dir);
+            write_int_to_sysfs(path, 200); /* ~80% duty — enough to spin up */
+            dev_info(d->dev, "spinning up fan for detection\n");
+        } else {
+            /* poll_ms has elapsed — tachometer has had a full measurement window */
+            int rpm;
+
+            snprintf(path, sizeof(path), "%s/fan1_input", d->fan_hwmon_dir);
+            rpm = read_int_from_sysfs(path);
+            d->fan_present = (rpm > 0);
+            snprintf(path, sizeof(path), "%s/pwm1_enable", d->fan_hwmon_dir);
+            write_int_to_sysfs(path, 2);   /* restore thermal control */
+            if (d->fan_present)
+                dev_info(d->dev, "fan detected at %d RPM\n", rpm);
+            else
+                dev_warn(d->dev, "no fan RPM signal; fan control disabled\n");
+            d->fan_detecting = false;
+        }
+        d->detect_count++;
+        schedule_delayed_work(&d->poll_work, msecs_to_jiffies(poll_ms));
+        return;
+    }
+
     /* ── Aux sources (Apex + NVMe) ── */
     if (!d->temp_path_count)
         discover_all_paths(d);
@@ -323,7 +405,7 @@ static void aux_poll_fn(struct work_struct *work)
     }
 
     /* ── Fan state and driver ── */
-    if (d->fan_cdev_state_path[0]) {
+    if (d->fan_present && d->fan_cdev_state_path[0]) {
         int cur = read_int_from_sysfs(d->fan_cdev_state_path);
         if (cur != INT_MIN) {
             /*
@@ -424,6 +506,8 @@ static int aux_probe(struct platform_device *pdev)
         dev_info(&pdev->dev, "no temperature sources at probe; will retry\n");
 
     discover_fan_cdev(d);
+    discover_fan_hwmon(d);
+    d->fan_detecting = d->fan_hwmon_dir[0] != '\0';
 
     tz = devm_thermal_of_zone_register(&pdev->dev, 0, d, &aux_tz_ops);
     if (IS_ERR(tz))
