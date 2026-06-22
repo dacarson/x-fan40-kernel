@@ -86,7 +86,7 @@
     // so these maps are additive — no conflict between zones.
     // ---------------------------------------------------------------
     fragment@3 {
-        target = <&cpu_thermal>;
+        target-path = "/thermal-zones/cpu-thermal";
         __overlay__ {
             trips {
                 x_fan40_cpu_med: x-fan40-cpu-med {
@@ -134,7 +134,7 @@
         __overlay__ {
             x_fan40_aux_sensor: x-fan40-aux-sensor {
                 compatible = "x-fan40,aux-temp-sensor";
-                #thermal-sensor-cells = <0>;
+                #thermal-sensor-cells = <1>;
             };
         };
     };
