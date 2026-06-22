@@ -1,0 +1,19 @@
+{
+    "configurations": [
+        {
+            "name": "Linux Kernel Module (cross-compiled on macOS)",
+            "includePath": [],
+            "defines": [
+                "__KERNEL__",
+                "MODULE"
+            ],
+            "compilerPath": "/usr/bin/clang",
+            "cStandard": "gnu11",
+            "intelliSenseMode": "linux-gcc-arm64",
+            "browse": {
+                "limitSymbolsToIncludedHeaders": true
+            }
+        }
+    ],
+    "version": 4
+}
