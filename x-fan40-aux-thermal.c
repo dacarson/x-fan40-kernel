@@ -28,10 +28,11 @@
 // state the aux zone could demand at the current aux_temp_mc.  If fan_state
 // exceeds that maximum, the CPU zone must be responsible.
 //
-// Fan detection: at probe the fan is spun up briefly at a fixed duty cycle
-// and the tachometer is read after one poll interval.  If RPM > 0 the fan is
-// present and normal thermal control proceeds; otherwise fan control is
-// disabled for the life of the module instance.
+// Fan detection: the fan is spun up briefly and the tachometer read after two
+// poll intervals.  If RPM > 0 the fan is confirmed present; if fan1_input
+// does not exist (no tachometer configured) the fan is assumed present.
+// Fan device discovery is retried each poll cycle until found, because the
+// pwm-fan driver may not have probed yet when this module loads at boot.
 //
 // Module parameters:
 //   poll_ms  - poll interval in milliseconds (default: 1000)
@@ -87,11 +88,12 @@ struct aux_sensor_data {
     char fan_driver_name[MAX_NAME_LEN];   /* "cpu", source name, or "none" */
     char fan_cdev_state_path[MAX_CDEV_PATH_LEN];
 
-    /* Fan detection — performed once at startup */
+    /* Fan detection — performed once after fan devices are found */
     bool fan_present;
     bool fan_detecting;
     int  detect_count;
-    char fan_hwmon_dir[MAX_CDEV_PATH_LEN]; /* "/sys/class/hwmon/hwmonX" */
+    char fan_hwmon_dir[MAX_CDEV_PATH_LEN]; /* "/sys/devices/platform/pwm-fan/hwmon/hwmonX" */
+    int  fan_discover_retries;             /* poll cycles spent retrying discovery */
 
     /* Aux zone trip temperatures, read from sysfs after zone registration */
     int  aux_trip_lo_temp;   /* milli-Celsius; default 55000 */
@@ -249,9 +251,9 @@ static void discover_all_paths(struct aux_sensor_data *d)
  * type "pwm-fan" and max_state == AUX_TRIP_HI_MAX_STATE (5).
  * The Pi 5's built-in fan also registers as type "pwm-fan" but has
  * max_state = 4, so the max_state check reliably selects ours.
- * AUX_TRIP_HI_MAX_STATE matches cooling-max-state in the DT overlay.
+ * Returns true if found.  Caller is responsible for logging on failure.
  */
-static void discover_fan_cdev(struct aux_sensor_data *d)
+static bool discover_fan_cdev(struct aux_sensor_data *d)
 {
     char path[MAX_CDEV_PATH_LEN];
     char buf[16];
@@ -273,17 +275,18 @@ static void discover_fan_cdev(struct aux_sensor_data *d)
         snprintf(d->fan_cdev_state_path, sizeof(d->fan_cdev_state_path),
                  "/sys/class/thermal/cooling_device%d/cur_state", n);
         dev_info(d->dev, "fan cooling device: cooling_device%d\n", n);
-        return;
+        return true;
     }
-    dev_warn(d->dev, "pwm-fan cooling device not found\n");
+    return false;
 }
 
 /*
  * Find the X-FAN40 hwmon device by scanning the pwm-fan platform device's
  * own hwmon directory.  This avoids confusing it with the Pi 5's built-in
  * cooling_fan, which is also named "pwmfan" in /sys/class/hwmon.
+ * Returns true if found.  Caller is responsible for logging on failure.
  */
-static void discover_fan_hwmon(struct aux_sensor_data *d)
+static bool discover_fan_hwmon(struct aux_sensor_data *d)
 {
     char path[MAX_CDEV_PATH_LEN];
     char name_buf[16];
@@ -299,9 +302,9 @@ static void discover_fan_hwmon(struct aux_sensor_data *d)
         snprintf(d->fan_hwmon_dir, sizeof(d->fan_hwmon_dir),
                  "/sys/devices/platform/pwm-fan/hwmon/hwmon%d", n);
         dev_info(d->dev, "fan hwmon: hwmon%d\n", n);
-        return;
+        return true;
     }
-    dev_warn(d->dev, "x-fan40 hwmon device not found; skipping fan detection\n");
+    return false;
 }
 
 /* ── Aux zone trip point discovery ───────────────────────────────────────── */
@@ -356,6 +359,8 @@ static void discover_aux_zone_trips(struct aux_sensor_data *d)
 
 /* ── Poll workqueue function ─────────────────────────────────────────────── */
 
+#define FAN_DISCOVER_MAX_RETRIES 30
+
 static void aux_poll_fn(struct work_struct *work)
 {
     struct aux_sensor_data *d = container_of(work, struct aux_sensor_data,
@@ -364,7 +369,32 @@ static void aux_poll_fn(struct work_struct *work)
     int max_idx = -1;
     int i;
 
-    /* ── Fan detection (runs for the first two poll cycles) ── */
+    /*
+     * ── Fan device discovery retry ──
+     * The pwm-fan driver may not have probed yet when this module loads at
+     * boot.  Retry here until both devices are found or we give up after
+     * FAN_DISCOVER_MAX_RETRIES poll cycles.
+     *
+     * Only kick off detection (fan_detecting = true) if hwmon was just newly
+     * found AND detection hasn't already run (detect_count == 0).
+     */
+    if (d->fan_discover_retries < FAN_DISCOVER_MAX_RETRIES &&
+        (d->fan_hwmon_dir[0] == '\0' || d->fan_cdev_state_path[0] == '\0')) {
+        d->fan_discover_retries++;
+        if (d->fan_hwmon_dir[0] == '\0')
+            discover_fan_hwmon(d);
+        if (d->fan_cdev_state_path[0] == '\0')
+            discover_fan_cdev(d);
+        if (d->fan_hwmon_dir[0] != '\0' && !d->fan_detecting && d->detect_count == 0)
+            d->fan_detecting = true;
+        if (d->fan_discover_retries == FAN_DISCOVER_MAX_RETRIES &&
+            (d->fan_hwmon_dir[0] == '\0' || d->fan_cdev_state_path[0] == '\0'))
+            dev_warn(d->dev,
+                     "fan device not found after %d s; disabling fan control\n",
+                     FAN_DISCOVER_MAX_RETRIES * poll_ms / 1000);
+    }
+
+    /* ── Fan detection (runs for the first three poll cycles after hwmon found) ── */
     if (d->fan_detecting) {
         char path[MAX_CDEV_PATH_LEN];
 
@@ -381,13 +411,20 @@ static void aux_poll_fn(struct work_struct *work)
 
             snprintf(path, sizeof(path), "%s/fan1_input", d->fan_hwmon_dir);
             rpm = read_int_from_sysfs(path);
-            d->fan_present = (rpm > 0);
             snprintf(path, sizeof(path), "%s/pwm1_enable", d->fan_hwmon_dir);
             write_int_to_sysfs(path, 2);   /* restore thermal control */
-            if (d->fan_present)
+            if (rpm == INT_MIN) {
+                /* fan1_input not present — tachometer not configured;
+                 * assume fan is physically connected and enable control */
+                d->fan_present = true;
+                dev_info(d->dev, "no tachometer; assuming fan is present\n");
+            } else if (rpm > 0) {
+                d->fan_present = true;
                 dev_info(d->dev, "fan detected at %d RPM\n", rpm);
-            else
+            } else {
+                d->fan_present = false;
                 dev_warn(d->dev, "no fan RPM signal; fan control disabled\n");
+            }
             d->fan_detecting = false;
         }
         d->detect_count++;
@@ -515,9 +552,15 @@ static int aux_probe(struct platform_device *pdev)
     if (!d->temp_path_count)
         dev_info(&pdev->dev, "no temperature sources at probe; will retry\n");
 
-    discover_fan_hwmon(d);
-    discover_fan_cdev(d);
-    d->fan_detecting = d->fan_hwmon_dir[0] != '\0';
+    {
+        bool hwmon_ok = discover_fan_hwmon(d);
+        bool cdev_ok  = discover_fan_cdev(d);
+
+        if (!hwmon_ok || !cdev_ok)
+            dev_info(&pdev->dev,
+                     "fan device not fully found at probe; will retry\n");
+        d->fan_detecting = hwmon_ok;
+    }
 
     tz = devm_thermal_of_zone_register(&pdev->dev, 0, d, &aux_tz_ops);
     if (IS_ERR(tz))
