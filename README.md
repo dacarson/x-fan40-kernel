@@ -170,12 +170,9 @@ options x-fan40-aux-thermal poll_ms=500
 |-----------|--------|-------------|
 | `aux_temp_mc` | read | Hottest Apex/NVMe temperature in milli-Celsius — this is what drives the aux thermal zone |
 | `source` | read | Name of the hottest Apex/NVMe device (`apex_0`, `nvme1`, etc.) |
-| `cpu_temp_mc` | read | CPU temperature in milli-Celsius — observability only, does not drive the aux zone |
 | `fan_state` | read | Current pwm-fan cooling state (0–5) |
 | `fan_driver` | read | Zone responsible for the current fan speed: `cpu`, a source name (e.g. `nvme0`), or `none` |
 
-`cpu_temp_mc` is polled purely for visibility. CPU fan control is handled
-independently by the device tree overlay via the kernel's `cpu_thermal` zone.
 `fan_driver` is inferred by comparing the actual fan state against the maximum
 state the aux zone could demand at the current aux temperature — if the fan is
 running faster than the aux zone requires, the CPU zone must be responsible.
@@ -186,9 +183,6 @@ cat /sys/devices/platform/x-fan40-aux-sensor/aux_temp_mc
 
 cat /sys/devices/platform/x-fan40-aux-sensor/source
 # → nvme0
-
-cat /sys/devices/platform/x-fan40-aux-sensor/cpu_temp_mc
-# → 78000   (78 °C — fan driven by DT overlay, not aux zone)
 
 cat /sys/devices/platform/x-fan40-aux-sensor/fan_state
 # → 4
