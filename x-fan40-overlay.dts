@@ -1,0 +1,167 @@
+// SPDX-License-Identifier: GPL-2.0
+// Device Tree Overlay for SupTronics X-FAN40 on Raspberry Pi 5
+//   PWM output : GPIO13 (PWM1 on RP1 chip, 25 kHz)
+//   Tachometer : GPIO16 (2 pulses / revolution)
+//
+// Install:
+//   sudo dtc -I dts -O dtb -o /boot/firmware/overlays/x-fan40.dtbo x-fan40-overlay.dts
+// Enable in /boot/firmware/config.txt:
+//   dtoverlay=x-fan40
+
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+
+/ {
+    compatible = "brcm,bcm2712";
+
+    // ---------------------------------------------------------------
+    // Fragment 0: enable the RP1 PWM1 controller (drives GPIO13/19)
+    // ---------------------------------------------------------------
+    fragment@0 {
+        target = <&rp1_pwm1>;
+        __overlay__ {
+            status = "okay";
+            pinctrl-names = "default";
+            pinctrl-0 = <&rp1_pwm1_gpio13>;
+        };
+    };
+
+    // ---------------------------------------------------------------
+    // Fragment 1: pwm-fan device
+    //   cooling-levels maps state index → PWM duty (0-255)
+    //   States: 0=off, 1=low(30%), 2=med(40%), 3=med-hi(60%),
+    //           4=hi(80%), 5=full(100%)
+    //   pwms period: 40000 ns = 25 kHz (standard 4-pin fan frequency)
+    // ---------------------------------------------------------------
+    fragment@1 {
+        target-path = "/";
+        __overlay__ {
+            x_fan40: pwm-fan {
+                compatible = "pwm-fan";
+                #cooling-cells = <2>;
+                cooling-min-state = <0>;
+                cooling-max-state = <5>;
+
+                pwms = <&rp1_pwm1 0 40000 0>;
+                cooling-levels = <0 77 102 153 204 255>;
+
+                // Tachometer: GPIO16, 2 pulses per revolution
+                fan-tach-gpios = <&gpio 16 GPIO_ACTIVE_HIGH>;
+                fan-tach-count = <2>;
+                fan-tach-meas-period = <1000>;
+            };
+        };
+    };
+
+    // ---------------------------------------------------------------
+    // Fragment 2: CPU thermal zone → fan cooling maps.
+    //
+    // Your kernel exposes these trip point types in thermal_zone0:
+    //   trip_point_0: critical
+    //   trip_point_1: active   (~55 °C)
+    //   trip_point_2: active   (~67 °C)
+    //   trip_point_3: active   (~75 °C)
+    //   trip_point_4: active   (~80 °C)
+    //
+    // Verify the DT labels on your build:
+    //   dtc -I fs /sys/firmware/devicetree/base 2>/dev/null \
+    //     | grep -A2 "trip_point\|cooling-map"
+    //
+    // The kernel thermal framework uses max-wins across all bound
+    // cooling maps, so adding more zones (fragments 3, 4 below) is
+    // additive — no conflict between zones.
+    // ---------------------------------------------------------------
+    fragment@2 {
+        target = <&cpu_thermal>;
+        __overlay__ {
+            cooling-maps {
+                map0 {
+                    trip = <&cpu_trip1>;             // ~55 °C → state 1
+                    cooling-device = <&x_fan40 1 2>;
+                };
+                map1 {
+                    trip = <&cpu_trip2>;             // ~67 °C → state 3
+                    cooling-device = <&x_fan40 3 4>;
+                };
+                map2 {
+                    trip = <&cpu_trip3>;             // ~75 °C → state 5
+                    cooling-device = <&x_fan40 5 5>;
+                };
+            };
+        };
+    };
+
+    // ---------------------------------------------------------------
+    // Fragment 3: virtual platform device for the aux thermal sensor.
+    //
+    // x-fan40-aux-thermal.ko matches this compatible string at probe
+    // time.  The module's get_temp() callback returns whatever userspace
+    // last wrote to:
+    //   /sys/devices/platform/x-fan40-aux-sensor/temp_mc
+    //
+    // If the module is not loaded the platform device exists in DT but
+    // no driver claims it; the thermal zone in fragment@4 is deferred
+    // (not created) until the module loads.  No harmful side effect.
+    // ---------------------------------------------------------------
+    fragment@3 {
+        target-path = "/";
+        __overlay__ {
+            x_fan40_aux_sensor: x-fan40-aux-sensor {
+                compatible = "x-fan40,aux-temp-sensor";
+                #thermal-sensor-cells = <0>;
+            };
+        };
+    };
+
+    // ---------------------------------------------------------------
+    // Fragment 4: thermal zone for the aux sensor.
+    //
+    // Adds a new zone to the kernel's thermal-zones table.  Trip points
+    // and cooling-map ranges are in °C × 1000 (milli-Celsius).
+    // fan_controller.py writes max(apex, nvme) temperature here;
+    // the step_wise governor drives cur_state just like the CPU zone.
+    //
+    // Adjust trip temperatures to match your hardware's comfort range:
+    //   aux_trip_lo : temperature at which fan starts helping       (55 °C)
+    //   aux_trip_hi : temperature at which fan goes full speed      (80 °C)
+    // ---------------------------------------------------------------
+    fragment@4 {
+        target-path = "/thermal-zones";
+        __overlay__ {
+            x-fan40-aux {
+                polling-delay-passive = <0>;
+                polling-delay         = <1000>;
+                thermal-sensors       = <&x_fan40_aux_sensor 0>;
+
+                trips {
+                    aux_trip_lo: x-fan40-aux-trip-lo {
+                        temperature = <55000>;   // 55 °C
+                        hysteresis  = <3000>;
+                        type        = "active";
+                    };
+                    aux_trip_hi: x-fan40-aux-trip-hi {
+                        temperature = <80000>;   // 80 °C
+                        hysteresis  = <5000>;
+                        type        = "active";
+                    };
+                };
+
+                cooling-maps {
+                    // 55 °C: ramp fan to states 1-3
+                    map0 {
+                        trip           = <&aux_trip_lo>;
+                        cooling-device = <&x_fan40 1 3>;
+                    };
+                    // 80 °C: drive fan to full speed
+                    map1 {
+                        trip           = <&aux_trip_hi>;
+                        cooling-device = <&x_fan40 4 5>;
+                    };
+                };
+            };
+        };
+    };
+};
