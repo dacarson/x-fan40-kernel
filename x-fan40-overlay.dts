@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 // Device Tree Overlay for SupTronics X-FAN40 on Raspberry Pi 5
-//   PWM output : GPIO13 (PWM1 on RP1 chip, 25 kHz)
+//   PWM output : GPIO13 (PWM0 channel 1 on RP1 chip, 25 kHz)
 //   Tachometer : GPIO16 (2 pulses / revolution)
 //
 // Install:
@@ -18,17 +18,17 @@
     compatible = "brcm,bcm2712";
 
     // ---------------------------------------------------------------
-    // Fragment 0: define GPIO13 pinctrl for rp1_pwm1.
-    // rp1_pwm1_gpio13 is not a named symbol in the Pi 5 6.12 base DT
-    // (only rp1_pwm1_gpio45 is), so we define it inline here using
-    // target-path (not target = <&rp1_gpio>) because phandle-targeted
-    // fragments for rp1_gpio are rejected by the firmware on Pi 5.
+    // Fragment 0: define GPIO13 pinctrl for rp1_pwm0.
+    // GPIO13 is PWM0 channel 1 on RP1 (function = "pwm0").
+    // Uses target-path rather than target = <&rp1_gpio> because
+    // phandle-targeted fragments for rp1_gpio are rejected by the
+    // Pi 5 firmware at boot.
     // ---------------------------------------------------------------
     fragment@0 {
         target-path = "/axi/pcie@1000120000/rp1/gpio@d0000";
         __overlay__ {
-            rp1_pwm1_gpio13: rp1_pwm1_gpio13 {
-                function = "pwm1";
+            rp1_pwm0_gpio13: rp1_pwm0_gpio13 {
+                function = "pwm0";
                 pins = "gpio13";
                 bias-pull-down;
             };
@@ -36,14 +36,14 @@
     };
 
     // ---------------------------------------------------------------
-    // Fragment 1: enable the RP1 PWM1 controller (drives GPIO13/19)
+    // Fragment 1: enable the RP1 PWM0 controller with GPIO13 pinctrl
     // ---------------------------------------------------------------
     fragment@1 {
-        target-path = "/axi/pcie@1000120000/rp1/pwm@9c000";
+        target-path = "/axi/pcie@1000120000/rp1/pwm@98000";
         __overlay__ {
             status = "okay";
             pinctrl-names = "default";
-            pinctrl-0 = <&rp1_pwm1_gpio13>;
+            pinctrl-0 = <&rp1_pwm0_gpio13>;
         };
     };
 
@@ -63,7 +63,7 @@
                 cooling-min-state = <0>;
                 cooling-max-state = <5>;
 
-                pwms = <&rp1_pwm1 0 40000 0>;
+                pwms = <&rp1_pwm0 1 40000 0>;
                 cooling-levels = <0 77 102 153 204 255>;
 
                 // Tachometer: GPIO16, 2 pulses per revolution
