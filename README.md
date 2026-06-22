@@ -34,6 +34,34 @@ the fan responds to all relevant heat sources without any user-space daemon:
 | 4 | 80 % | High |
 | 5 | 100 % | Full |
 
+### How the thermal governor drives fan states
+
+The kernel `step_wise` governor steps through cooling states one at a time
+based on trip points. Each cooling map in the DT overlay specifies a trip
+temperature and a `<min max>` state range the governor is allowed to use
+once that trip fires:
+
+| Zone | Trip | State range | Meaning |
+|------|------|-------------|---------|
+| aux (Apex/NVMe) | 55 °C | 1–3 | Fan starts at low and steps up to medium-high |
+| aux (Apex/NVMe) | 80 °C | 4–5 | Fan steps up to high and full |
+| cpu | 50 °C (`cpu_tepid`) | 1–2 | Fan starts at low |
+| cpu | 67.5 °C | 3–4 | Fan steps up to medium-high |
+| cpu | 75 °C | 5–5 | Fan goes to full |
+
+- **Below the trip temperature** — the zone requests state 0 (off).
+- **At or above the trip temperature** — the governor starts at the minimum
+  state for that range and steps up one state per poll cycle while the
+  temperature is still rising, or steps back down while it is falling. It
+  settles at whichever state within the range stabilises the temperature.
+- **Multiple trip points** — when the temperature crosses a second trip, the
+  higher range becomes available and the governor can step into it.
+
+The kernel applies **max-wins arbitration** across all zones: whichever zone
+demands a higher state wins. For example, if the CPU zone wants state 4 but the
+aux zone only wants state 2, the fan runs at state 4. The `fan_driver` sysfs
+attribute reports which zone is responsible.
+
 ### Architecture
 
 ```
