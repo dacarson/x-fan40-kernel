@@ -65,11 +65,11 @@ attribute reports which zone is responsible.
 ### Architecture
 
 ```
-CPU thermal zone  ──────────────────────────────────────────────────┐
+CPU thermal zone   ──────────────────────────────────────────────────┐
                                                                      ▼
-Coral TPU  ──► /sys/class/apex/apex_N/temp ──┐
+Coral TPU  ──► /sys/class/apex/apex_N/temp  ──┐
                                               ├──► x-fan40-aux-thermal.ko
-NVMe       ──► /sys/class/nvme/nvmeN/...  ──┘     (aux thermal zone)
+NVMe       ──► /sys/class/nvme/nvmeN/...    ──┘     (aux thermal zone)
                                                            │
                                                            ▼
                                                   kernel max-wins arbitration
@@ -266,8 +266,17 @@ The DT overlay must be active before the module is loaded. Confirm with:
 dtoverlay -l | grep x-fan40
 ```
 
-If not listed, check `/boot/firmware/config.txt` for `dtoverlay=x-fan40`
-and reboot.
+On Pi 5 with kernel 6.12, `dtoverlay -l` does not list overlays applied
+at boot time via `config.txt`, even when they are working correctly.
+Verify the overlay is active by checking for its sysfs devices instead:
+
+```bash
+ls /sys/devices/platform/x-fan/hwmon/
+ls /sys/devices/platform/x-fan40-aux-sensor/
+```
+
+If those paths are missing, check `/boot/firmware/config.txt` for
+`dtoverlay=x-fan40` and reboot.
 
 **`source` reads `none` after module load**
 
@@ -282,11 +291,13 @@ ls /sys/class/nvme/
 The module retries discovery on every poll cycle, so `source` will update
 automatically once the devices appear.
 
-**`dtoverlay -l` shows `No overlays loaded` after reboot**
+**Overlay not working after reboot**
 
-The overlay failed to apply at boot. Run `sudo dtoverlay -v x-fan40` to
-attempt a manual load and check `dmesg` for the error. Common causes on
-Pi 5 kernel 6.12:
+On Pi 5 with kernel 6.12, `dtoverlay -l` does not list boot-time overlays,
+so its output cannot confirm whether the overlay applied. Use sysfs instead
+(see above). If the sysfs paths are missing, the overlay failed to apply.
+Run `sudo dtoverlay -v x-fan40` to attempt a manual load and check `dmesg`
+for the error. Common causes on Pi 5 kernel 6.12:
 
 - `node label 'rp1_pwm1_gpio13' not found` — the GPIO13 pinctrl node is
   defined inline in the overlay (fragment 0) for this reason; if you see this
