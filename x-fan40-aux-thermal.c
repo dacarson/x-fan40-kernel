@@ -245,22 +245,47 @@ static void discover_all_paths(struct aux_sensor_data *d)
 /* ── Fan cooling device discovery ────────────────────────────────────────── */
 
 /*
- * Find the pwm-fan cooling device by scanning /sys/class/thermal/cooling_deviceN
- * for type "pwm-fan" and store the path to its cur_state file.
+ * Find the X-FAN40 cooling device by scanning cooling_deviceN for type
+ * "pwm-fan", then cross-referencing via the device symlink to confirm it
+ * belongs to our pwm-fan platform device (not the Pi 5 built-in fan, which
+ * also registers as "pwm-fan").
+ *
+ * filp_open follows intermediate symlinks, so the path
+ *   /sys/class/thermal/cooling_deviceN/device/hwmon/hwmonX/name
+ * traverses the 'device' symlink to the platform device and reads the hwmon
+ * name from there.  Must be called after discover_fan_hwmon() so that
+ * fan_hwmon_dir is populated for the cross-check.
  */
 static void discover_fan_cdev(struct aux_sensor_data *d)
 {
     char path[MAX_CDEV_PATH_LEN];
-    char type_buf[16];
+    char buf[16];
+    const char *hwmon_name;
     int n;
+
+    /* Extract the hwmon leaf name (e.g. "hwmon5") from the stored dir path */
+    hwmon_name = strrchr(d->fan_hwmon_dir, '/');
+    if (hwmon_name)
+        hwmon_name++;   /* skip the trailing '/' */
 
     for (n = 0; n <= 9; n++) {
         snprintf(path, sizeof(path),
                  "/sys/class/thermal/cooling_device%d/type", n);
-        if (read_str_from_sysfs(path, type_buf, sizeof(type_buf)) <= 0)
+        if (read_str_from_sysfs(path, buf, sizeof(buf)) <= 0)
             continue;
-        if (strcmp(type_buf, "pwm-fan") != 0)
+        if (strcmp(buf, "pwm-fan") != 0)
             continue;
+
+        /* Cross-check: confirm this cooling device belongs to our platform device */
+        if (hwmon_name) {
+            snprintf(path, sizeof(path),
+                     "/sys/class/thermal/cooling_device%d/device/hwmon/%s/name",
+                     n, hwmon_name);
+            if (read_str_from_sysfs(path, buf, sizeof(buf)) <= 0 ||
+                strcmp(buf, "pwmfan") != 0)
+                continue;
+        }
+
         snprintf(d->fan_cdev_state_path, sizeof(d->fan_cdev_state_path),
                  "/sys/class/thermal/cooling_device%d/cur_state", n);
         dev_info(d->dev, "fan cooling device: cooling_device%d\n", n);
@@ -505,8 +530,8 @@ static int aux_probe(struct platform_device *pdev)
     if (!d->temp_path_count)
         dev_info(&pdev->dev, "no temperature sources at probe; will retry\n");
 
-    discover_fan_cdev(d);
     discover_fan_hwmon(d);
+    discover_fan_cdev(d);
     d->fan_detecting = d->fan_hwmon_dir[0] != '\0';
 
     tz = devm_thermal_of_zone_register(&pdev->dev, 0, d, &aux_tz_ops);
