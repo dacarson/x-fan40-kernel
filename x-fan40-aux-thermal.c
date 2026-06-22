@@ -74,9 +74,10 @@ static unsigned int poll_ms = POLL_MS_DEFAULT;
 module_param(poll_ms, uint, 0644);
 MODULE_PARM_DESC(poll_ms, "Temperature poll interval in milliseconds");
 
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("MIT");
 MODULE_DESCRIPTION("Virtual thermal sensor for x-fan40 auxiliary heat sources");
-MODULE_AUTHOR("x-fan40");
+MODULE_AUTHOR("David Carson <dacarson@gmail.com>");
+MODULE_VERSION(MODULE_VER);
 
 struct aux_sensor_data {
     /* Aux zone temperatures (Apex + NVMe) — drive the thermal zone */

@@ -1,3 +1,4 @@
+VERSION     := 1.0.0
 OVERLAY     := x-fan40
 DTS         := $(OVERLAY)-overlay.dts
 DTBO        := $(OVERLAY).dtbo
@@ -26,7 +27,7 @@ test-fan40: test-fan40.c
 # ── Kernel module (aux thermal zones for apex / nvme) ─────────────────────
 
 module:
-	$(MAKE) -C $(KDIR) M=$(CURDIR) modules
+	$(MAKE) -C $(KDIR) M=$(CURDIR) modules EXTRA_CFLAGS="-DMODULE_VER=\"$(VERSION)\""
 
 # ── Install ────────────────────────────────────────────────────────────────
 
