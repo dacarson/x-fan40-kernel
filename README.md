@@ -168,7 +168,7 @@ options x-fan40-aux-thermal poll_ms=500
 
 | Attribute | Access | Description |
 |-----------|--------|-------------|
-| `aux_temp_mc` | read | Hottest Apex/NVMe temperature in milli-Celsius — this is what drives the aux thermal zone |
+| `aux_temp` | read | Hottest Apex/NVMe temperature in milli-Celsius — this is what drives the aux thermal zone |
 | `source` | read | Name of the hottest Apex/NVMe device (`apex_0`, `nvme1`, etc.) |
 | `fan_state` | read | Current pwm-fan cooling state (0–5) |
 | `fan_driver` | read | Zone responsible for the current fan speed: `cpu`, a source name (e.g. `nvme0`), or `none` |
@@ -178,7 +178,7 @@ state the aux zone could demand at the current aux temperature — if the fan is
 running faster than the aux zone requires, the CPU zone must be responsible.
 
 ```bash
-cat /sys/devices/platform/x-fan40-aux-sensor/aux_temp_mc
+cat /sys/devices/platform/x-fan40-aux-sensor/aux_temp
 # → 65000   (65 °C, from nvme0 — drives aux zone)
 
 cat /sys/devices/platform/x-fan40-aux-sensor/source

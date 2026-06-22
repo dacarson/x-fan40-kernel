@@ -19,14 +19,10 @@
 // that appends to the shared temp_paths[] array.
 //
 // Sysfs attributes (read-only):
-//   aux_temp_mc  — max Apex/NVMe temperature in milli-Celsius (drives aux zone)
-//   source       — name of hottest aux device (e.g. "apex_0", "nvme1")
-//   cpu_temp_mc  — CPU temperature in milli-Celsius (observability only)
-//   fan_state    — current pwm-fan cooling state (0-5)
-//   fan_driver   — zone driving the fan: "cpu", source name, or "none"
-//
-// cpu_temp_mc is polled for visibility but is NOT fed into the aux thermal zone.
-// The DT overlay (fragment 2) owns CPU cooling via the existing cpu_thermal zone.
+//   aux_temp   — max Apex/NVMe temperature in milli-Celsius (drives aux zone)
+//   source     — name of hottest aux device (e.g. "apex_0", "nvme1")
+//   fan_state  — current pwm-fan cooling state (0-5)
+//   fan_driver — zone driving the fan: "cpu", source name, or "none"
 //
 // fan_driver is determined by comparing the actual fan_state with the maximum
 // state the aux zone could demand at the current aux_temp_mc.  If fan_state
@@ -79,9 +75,6 @@ struct aux_sensor_data {
     /* Aux zone temperatures (Apex + NVMe) — drive the thermal zone */
     int  aux_temp_mc;
     char source_name[MAX_NAME_LEN];
-
-    /* CPU temperature — observability only, does not drive aux zone */
-    int  cpu_temp_mc;
 
     /* Fan state */
     int  fan_state;                       /* actual pwm-fan cur_state */
@@ -329,13 +322,6 @@ static void aux_poll_fn(struct work_struct *work)
         thermal_zone_device_update(d->tz, THERMAL_EVENT_UNSPECIFIED);
     }
 
-    /* ── CPU (observability only) ── */
-    {
-        int v = read_int_from_sysfs("/sys/class/thermal/thermal_zone0/temp");
-        if (v != INT_MIN)
-            d->cpu_temp_mc = v;
-    }
-
     /* ── Fan state and driver ── */
     if (d->fan_cdev_state_path[0]) {
         int cur = read_int_from_sysfs(d->fan_cdev_state_path);
@@ -373,13 +359,13 @@ static void aux_poll_fn(struct work_struct *work)
 
 /* ── sysfs attributes (read-only) ────────────────────────────────────────── */
 
-static ssize_t aux_temp_mc_show(struct device *dev,
-                                 struct device_attribute *attr, char *buf)
+static ssize_t aux_temp_show(struct device *dev,
+                              struct device_attribute *attr, char *buf)
 {
     struct aux_sensor_data *d = dev_get_drvdata(dev);
     return sysfs_emit(buf, "%d\n", d->aux_temp_mc);
 }
-static DEVICE_ATTR_RO(aux_temp_mc);
+static DEVICE_ATTR_RO(aux_temp);
 
 static ssize_t source_show(struct device *dev,
                             struct device_attribute *attr, char *buf)
@@ -388,14 +374,6 @@ static ssize_t source_show(struct device *dev,
     return sysfs_emit(buf, "%s\n", d->source_name);
 }
 static DEVICE_ATTR_RO(source);
-
-static ssize_t cpu_temp_mc_show(struct device *dev,
-                                 struct device_attribute *attr, char *buf)
-{
-    struct aux_sensor_data *d = dev_get_drvdata(dev);
-    return sysfs_emit(buf, "%d\n", d->cpu_temp_mc);
-}
-static DEVICE_ATTR_RO(cpu_temp_mc);
 
 static ssize_t fan_state_show(struct device *dev,
                                struct device_attribute *attr, char *buf)
@@ -414,9 +392,8 @@ static ssize_t fan_driver_show(struct device *dev,
 static DEVICE_ATTR_RO(fan_driver);
 
 static struct attribute *aux_sensor_attrs[] = {
-    &dev_attr_aux_temp_mc.attr,
+    &dev_attr_aux_temp.attr,
     &dev_attr_source.attr,
-    &dev_attr_cpu_temp_mc.attr,
     &dev_attr_fan_state.attr,
     &dev_attr_fan_driver.attr,
     NULL,
@@ -434,8 +411,7 @@ static int aux_probe(struct platform_device *pdev)
     if (!d)
         return -ENOMEM;
 
-    d->aux_temp_mc     = SAFE_TEMP_MC;
-    d->cpu_temp_mc     = SAFE_TEMP_MC;
+    d->aux_temp_mc      = SAFE_TEMP_MC;
     d->aux_trip_lo_temp = 55000;   /* overwritten by discover_aux_zone_trips */
     d->aux_trip_hi_temp = 80000;
     strscpy(d->source_name,     "none", MAX_NAME_LEN);
