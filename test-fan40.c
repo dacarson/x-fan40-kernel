@@ -154,18 +154,16 @@ static void check_hwmon(void)
 {
     char path[160], name[32];
 
-    printf("\n--- PWM Fan hwmon ---\n");
+    printf("\n--- x-fan hwmon ---\n");
 
     for (int n = 0; n <= 15; n++) {
         snprintf(path, sizeof(path),
-                 "/sys/devices/platform/pwm-fan/hwmon/hwmon%d/name", n);
+                 "/sys/devices/platform/x-fan/hwmon/hwmon%d/name", n);
         if (read_str(path, name, sizeof(name)) < 0)
-            continue;
-        if (strcmp(name, "pwmfan") != 0)
             continue;
 
         snprintf(g_hwmon_dir, sizeof(g_hwmon_dir),
-                 "/sys/devices/platform/pwm-fan/hwmon/hwmon%d", n);
+                 "/sys/devices/platform/x-fan/hwmon/hwmon%d", n);
 
         snprintf(path, sizeof(path), "%s/pwm1_enable", g_hwmon_dir);
         int enable = read_int(path);
@@ -174,7 +172,7 @@ static void check_hwmon(void)
 
         char msg[80];
         snprintf(msg, sizeof(msg),
-                 "pwm-fan hwmon%d found (pwm1_enable=%d pwm1=%d)",
+                 "x-fan hwmon%d found (pwm1_enable=%d pwm1=%d)",
                  n, enable, pwm);
         ok(msg);
 
@@ -189,7 +187,7 @@ static void check_hwmon(void)
         return;
     }
 
-    bad("pwm-fan hwmon not found under /sys/devices/platform/pwm-fan/");
+    bad("x-fan hwmon not found under /sys/devices/platform/x-fan/");
 }
 
 /* ── Temperature source discovery (mirrors discover_apex/nvme_paths) ─────── */

@@ -66,7 +66,7 @@
     fragment@2 {
         target-path = "/";
         __overlay__ {
-            x_fan40: pwm-fan {
+            x_fan40: x-fan {
                 compatible = "pwm-fan";
                 #cooling-cells = <2>;
                 cooling-min-state = <0>;
@@ -135,9 +135,13 @@
     // Fragment 4: virtual platform device for the aux thermal sensor.
     //
     // x-fan40-aux-thermal.ko matches this compatible string at probe
-    // time.  The module's get_temp() callback returns whatever userspace
-    // last wrote to:
-    //   /sys/devices/platform/x-fan40-aux-sensor/temp_mc
+    // time.  The module autonomously polls Apex and NVMe temperatures
+    // via sysfs and reports the maximum to the thermal framework via
+    // its get_temp() callback.
+    //
+    // Read-only sysfs attributes under
+    //   /sys/devices/platform/x-fan40-aux-sensor/
+    // expose status: aux_temp (mC), source, fan_state, fan_driver.
     //
     // If the module is not loaded the platform device exists in DT but
     // no driver claims it; the thermal zone in fragment@5 is deferred
@@ -158,12 +162,13 @@
     //
     // Adds a new zone to the kernel's thermal-zones table.  Trip points
     // and cooling-map ranges are in °C × 1000 (milli-Celsius).
-    // fan_controller.py writes max(apex, nvme) temperature here;
-    // the step_wise governor drives cur_state just like the CPU zone.
+    // x-fan40-aux-thermal.ko polls Apex/NVMe temperatures and updates
+    // this zone; the step_wise governor drives cur_state just like the
+    // CPU zone.
     //
     // Adjust trip temperatures to match your hardware's comfort range:
     //   aux_trip_lo : temperature at which fan starts helping       (55 °C)
-    //   aux_trip_hi : temperature at which fan goes full speed      (80 °C)
+    //   aux_trip_hi : temperature at which fan ramps to states 4-5   (80 °C)
     // ---------------------------------------------------------------
     fragment@5 {
         target-path = "/thermal-zones";
@@ -192,7 +197,7 @@
                         trip           = <&aux_trip_lo>;
                         cooling-device = <&x_fan40 1 3>;
                     };
-                    // 80 °C: drive fan to full speed
+                    // 80 °C: ramp fan to states 4-5 (80-100%)
                     map1 {
                         trip           = <&aux_trip_hi>;
                         cooling-device = <&x_fan40 4 5>;

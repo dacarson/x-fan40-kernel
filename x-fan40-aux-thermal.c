@@ -92,7 +92,7 @@ struct aux_sensor_data {
     bool fan_present;
     bool fan_detecting;
     int  detect_count;
-    char fan_hwmon_dir[MAX_CDEV_PATH_LEN]; /* "/sys/devices/platform/pwm-fan/hwmon/hwmonX" */
+    char fan_hwmon_dir[MAX_CDEV_PATH_LEN]; /* "/sys/devices/platform/x-fan/hwmon/hwmonX" */
     int  fan_discover_retries;             /* poll cycles spent retrying discovery */
 
     /* Aux zone trip temperatures, read from sysfs after zone registration */
@@ -281,9 +281,10 @@ static bool discover_fan_cdev(struct aux_sensor_data *d)
 }
 
 /*
- * Find the X-FAN40 hwmon device by scanning the pwm-fan platform device's
- * own hwmon directory.  This avoids confusing it with the Pi 5's built-in
- * cooling_fan, which is also named "pwmfan" in /sys/class/hwmon.
+ * Find the X-FAN40 hwmon device by scanning the x-fan platform device's
+ * own hwmon directory.  The x-fan DT node name makes the path unique,
+ * so no name check is needed to distinguish it from the Pi 5's built-in
+ * cooling_fan.
  * Returns true if found.  Caller is responsible for logging on failure.
  */
 static bool discover_fan_hwmon(struct aux_sensor_data *d)
@@ -294,13 +295,11 @@ static bool discover_fan_hwmon(struct aux_sensor_data *d)
 
     for (n = 0; n <= 15; n++) {
         snprintf(path, sizeof(path),
-                 "/sys/devices/platform/pwm-fan/hwmon/hwmon%d/name", n);
+                 "/sys/devices/platform/x-fan/hwmon/hwmon%d/name", n);
         if (read_str_from_sysfs(path, name_buf, sizeof(name_buf)) <= 0)
             continue;
-        if (strcmp(name_buf, "pwmfan") != 0)
-            continue;
         snprintf(d->fan_hwmon_dir, sizeof(d->fan_hwmon_dir),
-                 "/sys/devices/platform/pwm-fan/hwmon/hwmon%d", n);
+                 "/sys/devices/platform/x-fan/hwmon/hwmon%d", n);
         dev_info(d->dev, "fan hwmon: hwmon%d\n", n);
         return true;
     }
@@ -394,7 +393,7 @@ static void aux_poll_fn(struct work_struct *work)
                      FAN_DISCOVER_MAX_RETRIES * poll_ms / 1000);
     }
 
-    /* ── Fan detection (runs for the first three poll cycles after hwmon found) ── */
+    /* ── Fan detection (runs for the first two poll cycles after hwmon found) ── */
     if (d->fan_detecting) {
         char path[MAX_CDEV_PATH_LEN];
 
@@ -404,8 +403,8 @@ static void aux_poll_fn(struct work_struct *work)
             snprintf(path, sizeof(path), "%s/pwm1", d->fan_hwmon_dir);
             write_int_to_sysfs(path, 200); /* ~80% duty — enough to spin up */
             dev_info(d->dev, "spinning up fan for detection\n");
-        } else if (d->detect_count >= 2) {
-            /* Two poll intervals elapsed — at least one complete tach measurement
+        } else if (d->detect_count >= 1) {
+            /* One poll interval elapsed — one complete tach measurement
              * window has passed since spin-up (fan-tach-meas-period = 1000 ms) */
             int rpm;
 
