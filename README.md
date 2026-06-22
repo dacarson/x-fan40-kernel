@@ -11,7 +11,7 @@ is a 4-pin PWM fan HAT designed for active cooling of M.2 NVMe drives on the
 Raspberry Pi 5. This project integrates it into the Linux thermal framework so
 the fan responds to all relevant heat sources without any user-space daemon:
 
-- **CPU** — handled by the device tree overlay (fragment 2), which adds
+- **CPU** — handled by the device tree overlay (fragment 3), which adds
   cooling maps to the Pi's existing `cpu_thermal` zone. No kernel module
   needed; the thermal framework drives the fan automatically from DT alone.
 - **M.2 NVMe drives and Coral TPU accelerators** — handled by the
@@ -50,7 +50,7 @@ NVMe       ──► /sys/class/nvme/nvmeN/...  ──┘     (aux thermal zone)
                                                     pwm-fan (GPIO13)
 ```
 
-The CPU zone is configured entirely in the device tree overlay (fragment 2)
+The CPU zone is configured entirely in the device tree overlay (fragment 3)
 — the kernel thermal framework wires it to the fan with no module or daemon
 involved. The aux zone is owned by `x-fan40-aux-thermal.ko`, which polls
 Coral TPU and NVMe temperatures and reports the maximum. The framework then
@@ -143,9 +143,14 @@ options x-fan40-aux-thermal poll_ms=500
 | `aux_temp_mc` | read | Hottest Apex/NVMe temperature in milli-Celsius — this is what drives the aux thermal zone |
 | `source` | read | Name of the hottest Apex/NVMe device (`apex_0`, `nvme1`, etc.) |
 | `cpu_temp_mc` | read | CPU temperature in milli-Celsius — observability only, does not drive the aux zone |
+| `fan_state` | read | Current pwm-fan cooling state (0–5) |
+| `fan_driver` | read | Zone responsible for the current fan speed: `cpu`, a source name (e.g. `nvme0`), or `none` |
 
 `cpu_temp_mc` is polled purely for visibility. CPU fan control is handled
 independently by the device tree overlay via the kernel's `cpu_thermal` zone.
+`fan_driver` is inferred by comparing the actual fan state against the maximum
+state the aux zone could demand at the current aux temperature — if the fan is
+running faster than the aux zone requires, the CPU zone must be responsible.
 
 ```bash
 cat /sys/devices/platform/x-fan40-aux-sensor/aux_temp_mc
@@ -156,6 +161,12 @@ cat /sys/devices/platform/x-fan40-aux-sensor/source
 
 cat /sys/devices/platform/x-fan40-aux-sensor/cpu_temp_mc
 # → 78000   (78 °C — fan driven by DT overlay, not aux zone)
+
+cat /sys/devices/platform/x-fan40-aux-sensor/fan_state
+# → 4
+
+cat /sys/devices/platform/x-fan40-aux-sensor/fan_driver
+# → cpu
 ```
 
 ## sysfs layout after install
@@ -245,11 +256,16 @@ model the function on `discover_nvme_paths()` and add an inner loop over
 ```c
 static void discover_all_paths(struct aux_sensor_data *d)
 {
+    int i;
+
     d->temp_path_count = 0;
     discover_apex_paths(d);
     discover_nvme_paths(d);
     discover_mydev_paths(d);   /* ← add this line */
-    ...
+
+    for (i = 0; i < d->temp_path_count; i++)
+        dev_info(d->dev, "discovered %s temperature source\n",
+                 d->temp_names[i]);
 }
 ```
 
@@ -327,6 +343,21 @@ ls /sys/class/nvme/
 
 The module retries discovery on every poll cycle, so `source` will update
 automatically once the devices appear.
+
+**`dtoverlay -l` shows `No overlays loaded` after reboot**
+
+The overlay failed to apply at boot. Run `sudo dtoverlay -v x-fan40` to
+attempt a manual load and check `dmesg` for the error. Common causes on
+Pi 5 kernel 6.12:
+
+- `node label 'rp1_pwm1_gpio13' not found` — the GPIO13 pinctrl node is
+  defined inline in the overlay (fragment 0) for this reason; if you see this
+  error the overlay version pre-dates the fix.
+- `node label 'cpu_trip1' not found` — the BCM2712 base DT only exports
+  `cpu_tepid` as a labeled CPU trip point; fragment 3 now uses that label and
+  defines its own nodes for the higher trip temperatures.
+
+Both are fixed in current source; rebuild and reinstall the overlay.
 
 **Fan does not spin after install**
 
