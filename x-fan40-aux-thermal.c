@@ -51,6 +51,7 @@
 #include <linux/workqueue.h>
 #include <linux/fs.h>
 #include <linux/string.h>
+#include "version.h"
 
 #define POLL_MS_DEFAULT      1000
 #define SAFE_TEMP_MC         25000  /* 25 °C — below all trip points */
@@ -74,7 +75,7 @@ static unsigned int poll_ms = POLL_MS_DEFAULT;
 module_param(poll_ms, uint, 0644);
 MODULE_PARM_DESC(poll_ms, "Temperature poll interval in milliseconds");
 
-MODULE_LICENSE("MIT");
+MODULE_LICENSE("Dual MIT/GPL");
 MODULE_DESCRIPTION("Virtual thermal sensor for x-fan40 auxiliary heat sources");
 MODULE_AUTHOR("David Carson <dacarson@gmail.com>");
 MODULE_VERSION(MODULE_VER);

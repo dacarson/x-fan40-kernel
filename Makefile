@@ -26,8 +26,11 @@ test-fan40: test-fan40.c
 
 # ── Kernel module (aux thermal zones for apex / nvme) ─────────────────────
 
-module:
-	$(MAKE) -C $(KDIR) M=$(CURDIR) modules EXTRA_CFLAGS="-DMODULE_VER=\"$(VERSION)\""
+module: version.h
+	$(MAKE) -C $(KDIR) M=$(CURDIR) modules
+
+version.h: Makefile
+	printf '#define MODULE_VER "%s"\n' '$(VERSION)' > $@
 
 # ── Install ────────────────────────────────────────────────────────────────
 
@@ -59,5 +62,5 @@ uninstall:
 # ── Clean ──────────────────────────────────────────────────────────────────
 
 clean:
-	rm -f $(DTBO) test-fan40
+	rm -f $(DTBO) test-fan40 version.h
 	$(MAKE) -C $(KDIR) M=$(CURDIR) clean
