@@ -76,9 +76,11 @@
                 cooling-levels = <0 77 102 153 204 255>;
 
                 // Tachometer: GPIO16, 2 pulses per revolution.
+                // The Pi 6.12 pwm-fan driver uses platform_irq_count() to
+                // discover tachometer inputs — it requires interrupts-extended,
+                // not the mainline fan-tach-gpios property.
                 // pinctrl-0 applies the pull-up (open-drain tach line).
-                // pulses-per-revolution replaces the deprecated fan-tach-count.
-                fan-tach-gpios = <&gpio 16 GPIO_ACTIVE_HIGH>;
+                interrupts-extended = <&gpio 16 IRQ_TYPE_EDGE_FALLING>;
                 pulses-per-revolution = <2>;
                 pinctrl-names = "default";
                 pinctrl-0 = <&rp1_tach_gpio16>;
