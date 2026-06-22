@@ -75,7 +75,7 @@ NVMe       ──► /sys/class/nvme/nvmeN/...  ──┘     (aux thermal zone)
                                                   kernel max-wins arbitration
                                                            │
                                                            ▼
-                                                    pwm-fan (GPIO13)
+                                                    x-fan (GPIO13)
 ```
 
 The CPU zone is configured entirely in the device tree overlay (fragment 3)
@@ -226,8 +226,9 @@ for d in /sys/class/hwmon/hwmon*/; do
 done
 ```
 
-The X-FAN40 is specifically at `/sys/devices/platform/pwm-fan/hwmon/hwmon*/fan1_input`.
-The `x-fan40-aux-thermal` module identifies it by its `max_state` value (5),
+The X-FAN40 is specifically at `/sys/devices/platform/x-fan/hwmon/hwmon*/fan1_input`.
+The `x-fan40-aux-thermal` module finds it by that path (the `x-fan` DT node
+name is unique). The thermal cooling device is identified by `max_state` 5,
 which differs from the Pi 5 built-in fan (max_state 4).
 
 ## Adding new temperature sources
@@ -257,7 +258,7 @@ The device tree compiler needs the C preprocessor to handle `#include`
 directives. Ensure `raspberrypi-kernel-headers` is installed — the Makefile
 runs `cpp` with the kernel include path automatically.
 
-**Module loads but `aux_temp_mc` sysfs attribute is missing**
+**Module loads but `aux_temp` sysfs attribute is missing**
 
 The DT overlay must be active before the module is loaded. Confirm with:
 
