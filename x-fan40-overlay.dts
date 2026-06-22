@@ -18,8 +18,11 @@
     compatible = "brcm,bcm2712";
 
     // ---------------------------------------------------------------
-    // Fragment 0: define GPIO13 pinctrl for rp1_pwm0.
+    // Fragment 0: define GPIO13 pinctrl for rp1_pwm0 and GPIO16
+    // pinctrl for the tachometer input.
     // GPIO13 is PWM0 channel 1 on RP1 (function = "pwm0").
+    // GPIO16 is the tachometer input; pull-up is required because
+    // the fan's tach line is open-drain.
     // Uses target-path rather than target = <&rp1_gpio> because
     // phandle-targeted fragments for rp1_gpio are rejected by the
     // Pi 5 firmware at boot.
@@ -31,6 +34,12 @@
                 function = "pwm0";
                 pins = "gpio13";
                 bias-pull-down;
+            };
+            rp1_tach_gpio16: rp1_tach_gpio16 {
+                function = "gpio";
+                pins = "gpio16";
+                bias-pull-up;
+                input-enable;
             };
         };
     };
@@ -66,10 +75,13 @@
                 pwms = <&rp1_pwm0 1 40000 0>;
                 cooling-levels = <0 77 102 153 204 255>;
 
-                // Tachometer: GPIO16, 2 pulses per revolution
+                // Tachometer: GPIO16, 2 pulses per revolution.
+                // pinctrl-0 applies the pull-up (open-drain tach line).
+                // pulses-per-revolution replaces the deprecated fan-tach-count.
                 fan-tach-gpios = <&gpio 16 GPIO_ACTIVE_HIGH>;
-                fan-tach-count = <2>;
-                fan-tach-meas-period = <1000>;
+                pulses-per-revolution = <2>;
+                pinctrl-names = "default";
+                pinctrl-0 = <&rp1_tach_gpio16>;
             };
         };
     };
