@@ -374,8 +374,9 @@ static void aux_poll_fn(struct work_struct *work)
             snprintf(path, sizeof(path), "%s/pwm1", d->fan_hwmon_dir);
             write_int_to_sysfs(path, 200); /* ~80% duty — enough to spin up */
             dev_info(d->dev, "spinning up fan for detection\n");
-        } else {
-            /* poll_ms has elapsed — tachometer has had a full measurement window */
+        } else if (d->detect_count >= 2) {
+            /* Two poll intervals elapsed — at least one complete tach measurement
+             * window has passed since spin-up (fan-tach-meas-period = 1000 ms) */
             int rpm;
 
             snprintf(path, sizeof(path), "%s/fan1_input", d->fan_hwmon_dir);
