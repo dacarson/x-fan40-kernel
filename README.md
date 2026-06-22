@@ -20,8 +20,8 @@ the fan responds to all relevant heat sources without any user-space daemon:
 
 | GPIO | Function |
 |------|----------|
-| GPIO13 | PWM output to fan (25 kHz, RP1 PWM1) |
-| GPIO16 | Tachometer input (2 pulses / revolution) |
+| GPIO13 | PWM output to fan (25 kHz, RP1 PWM0 channel 1) |
+| GPIO16 | Tachometer input (2 pulses / revolution, open-drain with pull-up) |
 
 ### Cooling states
 
@@ -213,6 +213,23 @@ The fan also appears as a thermal cooling device:
   max_state   → 5
 ```
 
+### Reading fan RPM
+
+The X-FAN40 and the Pi 5's built-in active cooler both appear as `pwmfan`
+hwmon devices. To see the RPM of both at once:
+
+```bash
+for d in /sys/class/hwmon/hwmon*/; do
+  name=$(cat "$d/name" 2>/dev/null)
+  rpm=$(cat "$d/fan1_input" 2>/dev/null || echo "no tach")
+  echo "$name: $rpm RPM  ($d)"
+done
+```
+
+The X-FAN40 is specifically at `/sys/devices/platform/pwm-fan/hwmon/hwmon*/fan1_input`.
+The `x-fan40-aux-thermal` module identifies it by its `max_state` value (5),
+which differs from the Pi 5 built-in fan (max_state 4).
+
 ## Adding new temperature sources
 
 See [ADDING-SOURCES.md](ADDING-SOURCES.md) for a step-by-step guide.
@@ -278,6 +295,26 @@ Pi 5 kernel 6.12:
   defines its own nodes for the higher trip temperatures.
 
 Both are fixed in current source; rebuild and reinstall the overlay.
+
+**`fan1_input` is missing from the hwmon directory**
+
+The tachometer entry only appears when the `pwm-fan` driver successfully
+registers an interrupt on GPIO16. Check that the overlay is current:
+
+```bash
+strings /boot/firmware/overlays/x-fan40.dtbo | grep -E 'interrupts-extended|rp1_tach'
+```
+
+You should see `interrupts-extended` and `rp1_tach_gpio16`. If you see
+`fan-tach-gpios` instead, rebuild with `make clean && make overlay &&
+sudo make install-overlay` and reboot.
+
+> **Note for kernel maintainers:** The Raspberry Pi 6.12 `pwm-fan` driver
+> diverges from mainline. It discovers tachometer inputs via
+> `platform_irq_count()`, which reads the `interrupts`/`interrupts-extended`
+> DT property. The mainline `fan-tach-gpios` property is silently ignored.
+> Use `interrupts-extended = <&gpio 16 IRQ_TYPE_EDGE_FALLING>` to wire the
+> tachometer.
 
 **Fan does not spin after install**
 
