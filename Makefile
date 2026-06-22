@@ -14,7 +14,7 @@ all: overlay module
 overlay: $(DTBO)
 
 $(DTBO): $(DTS)
-	dtc -I dts -O dtb -o $@ $<
+	cpp -nostdinc -I $(KDIR)/include -undef -x assembler-with-cpp $< | dtc -I dts -O dtb -o $@ -
 
 # ── Kernel module (aux thermal zones for apex / nvme) ─────────────────────
 
