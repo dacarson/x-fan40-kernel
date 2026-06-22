@@ -36,7 +36,7 @@ install-overlay: $(DTBO)
 	@echo "Reboot to activate the overlay."
 
 install-module:
-	$(MAKE) -C $(KDIR) M=$(PWD) modules_install
+	sudo $(MAKE) -C $(KDIR) M=$(PWD) modules_install
 	sudo depmod -a
 	@echo "Module installed. Load with: sudo modprobe x-fan40-aux-thermal"
 
