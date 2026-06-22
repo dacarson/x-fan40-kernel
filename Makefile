@@ -5,7 +5,7 @@ OVERLAY_DIR := /boot/firmware/overlays
 CONFIG      := /boot/firmware/config.txt
 KDIR        := /lib/modules/$(shell uname -r)/build
 
-.PHONY: all overlay module install install-module uninstall clean
+.PHONY: all overlay module test install install-module uninstall clean
 
 all: overlay module
 
@@ -15,6 +15,13 @@ overlay: $(DTBO)
 
 $(DTBO): $(DTS) Makefile
 	cpp -nostdinc -I $(KDIR)/include -undef -x assembler-with-cpp $< | dtc -I dts -O dtb -@ -o $@ -
+
+# ── Userspace validation tool ─────────────────────────────────────────────
+
+test: test-fan40
+
+test-fan40: test-fan40.c
+	$(CC) -O2 -o $@ $<
 
 # ── Kernel module (aux thermal zones for apex / nvme) ─────────────────────
 
@@ -51,5 +58,5 @@ uninstall:
 # ── Clean ──────────────────────────────────────────────────────────────────
 
 clean:
-	rm -f $(DTBO)
+	rm -f $(DTBO) test-fan40
 	$(MAKE) -C $(KDIR) M=$(CURDIR) clean
