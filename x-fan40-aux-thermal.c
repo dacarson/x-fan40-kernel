@@ -273,13 +273,18 @@ static void discover_aux_zone_trips(struct aux_sensor_data *d)
         if (strcmp(type_buf, "x-fan40-aux") != 0)
             continue;
 
+        int t0, t1;
+
         snprintf(path, sizeof(path),
                  "/sys/class/thermal/thermal_zone%d/trip_point_0_temp", z);
-        d->aux_trip_lo_temp = read_int_from_sysfs(path);
+        t0 = read_int_from_sysfs(path);
 
         snprintf(path, sizeof(path),
                  "/sys/class/thermal/thermal_zone%d/trip_point_1_temp", z);
-        d->aux_trip_hi_temp = read_int_from_sysfs(path);
+        t1 = read_int_from_sysfs(path);
+
+        d->aux_trip_lo_temp = (t0 < t1) ? t0 : t1;
+        d->aux_trip_hi_temp = (t0 > t1) ? t0 : t1;
 
         dev_info(d->dev, "aux zone trips: lo=%d hi=%d mC\n",
                  d->aux_trip_lo_temp, d->aux_trip_hi_temp);

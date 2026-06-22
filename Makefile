@@ -19,7 +19,7 @@ $(DTBO): $(DTS)
 # ── Kernel module (aux thermal zones for apex / nvme) ─────────────────────
 
 module:
-	$(MAKE) -C $(KDIR) M=$(PWD) modules
+	$(MAKE) -C $(KDIR) M=$(CURDIR) modules
 
 # ── Install ────────────────────────────────────────────────────────────────
 
@@ -36,7 +36,7 @@ install-overlay: $(DTBO)
 	@echo "Reboot to activate the overlay."
 
 install-module:
-	sudo $(MAKE) -C $(KDIR) M=$(PWD) modules_install
+	sudo $(MAKE) -C $(KDIR) M=$(CURDIR) modules_install
 	sudo depmod -a
 	@echo "Module installed. Load with: sudo modprobe x-fan40-aux-thermal"
 
@@ -52,4 +52,4 @@ uninstall:
 
 clean:
 	rm -f $(DTBO)
-	$(MAKE) -C $(KDIR) M=$(PWD) clean
+	$(MAKE) -C $(KDIR) M=$(CURDIR) clean

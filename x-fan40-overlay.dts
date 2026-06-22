@@ -18,9 +18,26 @@
     compatible = "brcm,bcm2712";
 
     // ---------------------------------------------------------------
-    // Fragment 0: enable the RP1 PWM1 controller (drives GPIO13/19)
+    // Fragment 0: define GPIO13 pinctrl for rp1_pwm1.
+    // rp1_pwm1_gpio13 is not a named symbol in the Pi 5 6.12 base DT
+    // (only rp1_pwm1_gpio45 is), so we define it inline here targeting
+    // the rp1_gpio controller, matching the gpio45 node structure.
     // ---------------------------------------------------------------
     fragment@0 {
+        target = <&rp1_gpio>;
+        __overlay__ {
+            rp1_pwm1_gpio13: rp1_pwm1_gpio13 {
+                function = "pwm1";
+                pins = "gpio13";
+                bias-pull-down;
+            };
+        };
+    };
+
+    // ---------------------------------------------------------------
+    // Fragment 1: enable the RP1 PWM1 controller (drives GPIO13/19)
+    // ---------------------------------------------------------------
+    fragment@1 {
         target = <&rp1_pwm1>;
         __overlay__ {
             status = "okay";
@@ -30,13 +47,13 @@
     };
 
     // ---------------------------------------------------------------
-    // Fragment 1: pwm-fan device
+    // Fragment 2: pwm-fan device
     //   cooling-levels maps state index → PWM duty (0-255)
     //   States: 0=off, 1=low(30%), 2=med(40%), 3=med-hi(60%),
     //           4=hi(80%), 5=full(100%)
     //   pwms period: 40000 ns = 25 kHz (standard 4-pin fan frequency)
     // ---------------------------------------------------------------
-    fragment@1 {
+    fragment@2 {
         target-path = "/";
         __overlay__ {
             x_fan40: pwm-fan {
@@ -57,37 +74,42 @@
     };
 
     // ---------------------------------------------------------------
-    // Fragment 2: CPU thermal zone → fan cooling maps.
+    // Fragment 3: CPU thermal zone → fan cooling maps.
     //
-    // Your kernel exposes these trip point types in thermal_zone0:
-    //   trip_point_0: critical
-    //   trip_point_1: active   (~55 °C)
-    //   trip_point_2: active   (~67 °C)
-    //   trip_point_3: active   (~75 °C)
-    //   trip_point_4: active   (~80 °C)
+    // BCM2712 6.12 base DT only labels one CPU trip point: cpu_tepid
+    // (50 °C).  The 67.5 °C and 75 °C trips exist in sysfs but have no
+    // DT symbols, so we define our own labeled trip nodes here and add
+    // them into cpu_thermal's trips node via overlay merge.
     //
-    // Verify the DT labels on your build:
-    //   dtc -I fs /sys/firmware/devicetree/base 2>/dev/null \
-    //     | grep -A2 "trip_point\|cooling-map"
-    //
-    // The kernel thermal framework uses max-wins across all bound
-    // cooling maps, so adding more zones (fragments 3, 4 below) is
-    // additive — no conflict between zones.
+    // The thermal framework uses max-wins across all bound cooling maps,
+    // so these maps are additive — no conflict between zones.
     // ---------------------------------------------------------------
-    fragment@2 {
+    fragment@3 {
         target = <&cpu_thermal>;
         __overlay__ {
+            trips {
+                x_fan40_cpu_med: x-fan40-cpu-med {
+                    temperature = <67500>;   // 67.5 °C
+                    hysteresis  = <5000>;
+                    type        = "active";
+                };
+                x_fan40_cpu_hi: x-fan40-cpu-hi {
+                    temperature = <75000>;   // 75 °C
+                    hysteresis  = <5000>;
+                    type        = "active";
+                };
+            };
             cooling-maps {
                 map0 {
-                    trip = <&cpu_trip1>;             // ~55 °C → state 1
+                    trip           = <&cpu_tepid>;         // 50 °C → states 1-2
                     cooling-device = <&x_fan40 1 2>;
                 };
                 map1 {
-                    trip = <&cpu_trip2>;             // ~67 °C → state 3
+                    trip           = <&x_fan40_cpu_med>;   // 67.5 °C → states 3-4
                     cooling-device = <&x_fan40 3 4>;
                 };
                 map2 {
-                    trip = <&cpu_trip3>;             // ~75 °C → state 5
+                    trip           = <&x_fan40_cpu_hi>;    // 75 °C → state 5
                     cooling-device = <&x_fan40 5 5>;
                 };
             };
@@ -95,7 +117,7 @@
     };
 
     // ---------------------------------------------------------------
-    // Fragment 3: virtual platform device for the aux thermal sensor.
+    // Fragment 4: virtual platform device for the aux thermal sensor.
     //
     // x-fan40-aux-thermal.ko matches this compatible string at probe
     // time.  The module's get_temp() callback returns whatever userspace
@@ -103,10 +125,10 @@
     //   /sys/devices/platform/x-fan40-aux-sensor/temp_mc
     //
     // If the module is not loaded the platform device exists in DT but
-    // no driver claims it; the thermal zone in fragment@4 is deferred
+    // no driver claims it; the thermal zone in fragment@5 is deferred
     // (not created) until the module loads.  No harmful side effect.
     // ---------------------------------------------------------------
-    fragment@3 {
+    fragment@4 {
         target-path = "/";
         __overlay__ {
             x_fan40_aux_sensor: x-fan40-aux-sensor {
@@ -117,7 +139,7 @@
     };
 
     // ---------------------------------------------------------------
-    // Fragment 4: thermal zone for the aux sensor.
+    // Fragment 5: thermal zone for the aux sensor.
     //
     // Adds a new zone to the kernel's thermal-zones table.  Trip points
     // and cooling-map ranges are in °C × 1000 (milli-Celsius).
@@ -128,7 +150,7 @@
     //   aux_trip_lo : temperature at which fan starts helping       (55 °C)
     //   aux_trip_hi : temperature at which fan goes full speed      (80 °C)
     // ---------------------------------------------------------------
-    fragment@4 {
+    fragment@5 {
         target-path = "/thermal-zones";
         __overlay__ {
             x-fan40-aux {
