@@ -212,13 +212,15 @@ static void discover_nvme_paths(struct aux_sensor_data *d)
 
 static void discover_all_paths(struct aux_sensor_data *d)
 {
+    int i;
+
     d->temp_path_count = 0;
     discover_apex_paths(d);
     discover_nvme_paths(d);
 
-    if (d->temp_path_count)
-        dev_info(d->dev, "discovered %d temperature source(s)\n",
-                 d->temp_path_count);
+    for (i = 0; i < d->temp_path_count; i++)
+        dev_info(d->dev, "discovered %s temperature source\n",
+                 d->temp_names[i]);
 }
 
 /* ── Fan cooling device discovery ────────────────────────────────────────── */
