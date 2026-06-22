@@ -20,11 +20,12 @@
     // ---------------------------------------------------------------
     // Fragment 0: define GPIO13 pinctrl for rp1_pwm1.
     // rp1_pwm1_gpio13 is not a named symbol in the Pi 5 6.12 base DT
-    // (only rp1_pwm1_gpio45 is), so we define it inline here targeting
-    // the rp1_gpio controller, matching the gpio45 node structure.
+    // (only rp1_pwm1_gpio45 is), so we define it inline here using
+    // target-path (not target = <&rp1_gpio>) because phandle-targeted
+    // fragments for rp1_gpio are rejected by the firmware on Pi 5.
     // ---------------------------------------------------------------
     fragment@0 {
-        target = <&rp1_gpio>;
+        target-path = "/axi/pcie@1000120000/rp1/gpio@d0000";
         __overlay__ {
             rp1_pwm1_gpio13: rp1_pwm1_gpio13 {
                 function = "pwm1";
@@ -38,7 +39,7 @@
     // Fragment 1: enable the RP1 PWM1 controller (drives GPIO13/19)
     // ---------------------------------------------------------------
     fragment@1 {
-        target = <&rp1_pwm1>;
+        target-path = "/axi/pcie@1000120000/rp1/pwm@9c000";
         __overlay__ {
             status = "okay";
             pinctrl-names = "default";
