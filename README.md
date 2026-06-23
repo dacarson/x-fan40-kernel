@@ -1,5 +1,9 @@
 # x-fan40-kernel
 
+[![License: MIT](https://img.shields.io/github/license/dacarson/x-fan40-kernel)](LICENSE)
+[![Version](https://img.shields.io/github/v/release/dacarson/x-fan40-kernel)](https://github.com/dacarson/x-fan40-kernel/releases)
+[![Downloads](https://img.shields.io/github/downloads/dacarson/x-fan40-kernel/total)](https://github.com/dacarson/x-fan40-kernel/releases)
+
 Kernel driver and device tree overlay for the
 [SupTronics X-FAN40](https://suptronics.com/Raspberrypi/Storage/x-fan40-v1.0.html)
 on Raspberry Pi 5.
