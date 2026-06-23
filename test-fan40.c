@@ -6,8 +6,10 @@
 // same sysfs paths that the kernel module uses.
 //
 // Build:  cc -O2 -o test-fan40 test-fan40.c
-// Run:    ./test-fan40            (read-only checks)
-//         sudo ./test-fan40 --spin (also physically tests fan spin-up)
+// Run:    ./test-fan40                  (read-only checks)
+//         sudo ./test-fan40 --spin      (briefly spin fan and read RPM)
+//         sudo ./test-fan40 --pwm 255   (set manual PWM 0-255, read RPM; fan stays in manual)
+//         sudo ./test-fan40 --auto      (restore thermal control)
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -67,6 +69,8 @@ static int write_int(const char *path, int val)
 
 static char g_hwmon_dir[128];
 static char g_cdev_state_path[128];
+
+#define AUX_SENSOR_PATH "/sys/bus/platform/devices/x-fan40-aux-sensor"
 
 static void check_thermal_zones(void)
 {
@@ -169,11 +173,19 @@ static void check_hwmon(void)
         int enable = read_int(path);
         snprintf(path, sizeof(path), "%s/pwm1", g_hwmon_dir);
         int pwm = read_int(path);
+        int cur_state = g_cdev_state_path[0] ? read_int(g_cdev_state_path) : INT_MIN;
 
-        char msg[80];
-        snprintf(msg, sizeof(msg),
-                 "x-fan hwmon%d found (pwm1_enable=%d pwm1=%d)",
-                 n, enable, pwm);
+        char msg[128];
+        const char *enable_label = enable == 2 ? "auto" :
+                                   enable == 1 ? "manual" : "disabled";
+        if (cur_state != INT_MIN)
+            snprintf(msg, sizeof(msg),
+                     "x-fan hwmon%d found (state=%d pwm1_enable=%d (%s) pwm1=%d / %.0f%%)",
+                     n, cur_state, enable, enable_label, pwm, pwm / 255.0 * 100);
+        else
+            snprintf(msg, sizeof(msg),
+                     "x-fan hwmon%d found (pwm1_enable=%d (%s) pwm1=%d / %.0f%%)",
+                     n, enable, enable_label, pwm, pwm / 255.0 * 100);
         ok(msg);
 
         snprintf(path, sizeof(path), "%s/fan1_input", g_hwmon_dir);
@@ -227,6 +239,44 @@ static void check_temp_sources(void)
 
     if (!found)
         note("no Apex or NVMe temperature sources found");
+}
+
+/* ── Aux sensor status (reads module sysfs attributes) ──────────────────── */
+
+static void check_aux_sensor(void)
+{
+    char path[128], buf[32];
+    char msg[128];
+
+    printf("\n--- Aux Sensor Status ---\n");
+
+    snprintf(path, sizeof(path), "%s/aux_temp", AUX_SENSOR_PATH);
+    int temp = read_int(path);
+    if (temp == INT_MIN) {
+        bad("aux_temp not readable — is x-fan40-aux-thermal loaded?");
+        return;
+    }
+    snprintf(msg, sizeof(msg), "aux_temp: %.1f°C", temp / 1000.0);
+    ok(msg);
+
+    snprintf(path, sizeof(path), "%s/source", AUX_SENSOR_PATH);
+    if (read_str(path, buf, sizeof(buf)) > 0) {
+        snprintf(msg, sizeof(msg), "source (hottest device): %s", buf);
+        ok(msg);
+    }
+
+    snprintf(path, sizeof(path), "%s/fan_state", AUX_SENSOR_PATH);
+    int state = read_int(path);
+    if (state != INT_MIN) {
+        snprintf(msg, sizeof(msg), "fan_state: %d", state);
+        ok(msg);
+    }
+
+    snprintf(path, sizeof(path), "%s/fan_driver", AUX_SENSOR_PATH);
+    if (read_str(path, buf, sizeof(buf)) > 0) {
+        snprintf(msg, sizeof(msg), "fan_driver (zone driving fan): %s", buf);
+        ok(msg);
+    }
 }
 
 /* ── Fan spin-up test (mirrors fan detection in aux_poll_fn) ─────────────── */
@@ -285,15 +335,91 @@ static void test_spin(void)
     }
 }
 
+/* ── Manual fan speed control ────────────────────────────────────────────── */
+
+static void set_fan_pwm(int pwm)
+{
+    char path[160], msg[80];
+
+    printf("\n--- Set Fan PWM ---\n");
+
+    if (g_hwmon_dir[0] == '\0') {
+        bad("hwmon not found; cannot set PWM");
+        return;
+    }
+    if (geteuid() != 0) {
+        bad("root required — re-run with sudo ./test-fan40 --pwm <value>");
+        return;
+    }
+
+    snprintf(path, sizeof(path), "%s/pwm1_enable", g_hwmon_dir);
+    if (write_int(path, 1) < 0) { bad("failed to set manual mode (pwm1_enable=1)"); return; }
+
+    snprintf(path, sizeof(path), "%s/pwm1", g_hwmon_dir);
+    if (write_int(path, pwm) < 0) {
+        bad("failed to write pwm1");
+        write_int(path, 2);
+        return;
+    }
+
+    snprintf(msg, sizeof(msg), "fan set to manual mode, pwm1=%d (%.0f%%)",
+             pwm, pwm / 255.0 * 100);
+    ok(msg);
+    info("waiting 2 s for tachometer measurement window...");
+    sleep(2);
+
+    snprintf(path, sizeof(path), "%s/fan1_input", g_hwmon_dir);
+    int rpm = read_int(path);
+    if (rpm == INT_MIN)
+        note("fan1_input not readable — no tachometer configured");
+    else {
+        snprintf(msg, sizeof(msg), "fan speed: %d RPM", rpm);
+        ok(msg);
+    }
+
+    info("fan remains in manual mode; run --auto to restore thermal control");
+}
+
+static void set_fan_auto(void)
+{
+    char path[160];
+
+    printf("\n--- Restore Auto Control ---\n");
+
+    if (g_hwmon_dir[0] == '\0') {
+        bad("hwmon not found; cannot restore auto mode");
+        return;
+    }
+    if (geteuid() != 0) {
+        bad("root required — re-run with sudo ./test-fan40 --auto");
+        return;
+    }
+
+    snprintf(path, sizeof(path), "%s/pwm1_enable", g_hwmon_dir);
+    if (write_int(path, 2) < 0)
+        bad("failed to restore auto mode (pwm1_enable=2)");
+    else
+        ok("restored thermal control (pwm1_enable=2 / auto)");
+}
+
 /* ── Entry point ─────────────────────────────────────────────────────────── */
 
 int main(int argc, char *argv[])
 {
-    int do_spin = 0;
+    int do_spin = 0, do_auto = 0, pwm_val = -1;
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--spin") == 0)
+        if (strcmp(argv[i], "--spin") == 0) {
             do_spin = 1;
+        } else if (strcmp(argv[i], "--auto") == 0) {
+            do_auto = 1;
+        } else if (strcmp(argv[i], "--pwm") == 0 && i + 1 < argc) {
+            pwm_val = atoi(argv[++i]);
+            if (pwm_val < 0 || pwm_val > 255) {
+                fprintf(stderr, "error: --pwm value must be 0-255\n");
+                return 1;
+            }
+        }
     }
 
     printf("x-fan40 system validation\n");
@@ -303,9 +429,14 @@ int main(int argc, char *argv[])
     check_cooling_devices();
     check_hwmon();
     check_temp_sources();
+    check_aux_sensor();
 
     if (do_spin)
         test_spin();
+    if (pwm_val >= 0)
+        set_fan_pwm(pwm_val);
+    if (do_auto)
+        set_fan_auto();
 
     printf("\n=========================\n");
     printf("Results: %d passed, %d failed, %d warnings\n",
