@@ -61,6 +61,7 @@
 #define MAX_PATH_LEN         48     /* "/sys/class/nvme/nvmeX/hwmonXX/temp1_input" = 41 */
 #define MAX_NAME_LEN         8      /* "apex_X" = 6, "nvmeX" = 5 */
 #define MAX_CDEV_PATH_LEN    64     /* "/sys/class/thermal/cooling_deviceN/cur_state" */
+#define SOURCE_DISCOVER_MAX_RETRIES 30
 
 /*
  * Cooling map upper bounds from x-fan40-overlay.dts fragment 4:
@@ -105,6 +106,7 @@ struct aux_sensor_data {
     char temp_paths[MAX_TEMP_SOURCES][MAX_PATH_LEN];
     char temp_names[MAX_TEMP_SOURCES][MAX_NAME_LEN];
     int  temp_path_count;
+    int  source_discover_retries; /* poll cycles spent retrying source discovery */
 
     struct thermal_zone_device *tz;
     struct delayed_work        poll_work;
@@ -191,6 +193,15 @@ static void write_int_to_sysfs(const char *path, int val)
 
 /* ── Source path discovery ───────────────────────────────────────────────── */
 
+static bool path_in_table(struct aux_sensor_data *d, const char *path)
+{
+    int i;
+    for (i = 0; i < d->temp_path_count; i++)
+        if (strncmp(d->temp_paths[i], path, MAX_PATH_LEN) == 0)
+            return true;
+    return false;
+}
+
 static void discover_apex_paths(struct aux_sensor_data *d)
 {
     char path[MAX_PATH_LEN];
@@ -200,12 +211,14 @@ static void discover_apex_paths(struct aux_sensor_data *d)
         struct file *f;
 
         snprintf(path, sizeof(path), "/sys/class/apex/apex_%d/temp", n);
-        f = filp_open(path, O_RDONLY, 0);
-        if (!IS_ERR(f)) {
-            filp_close(f, NULL);
-            strscpy(d->temp_paths[d->temp_path_count], path, MAX_PATH_LEN);
-            snprintf(d->temp_names[d->temp_path_count], MAX_NAME_LEN, "apex_%d", n);
-            d->temp_path_count++;
+        if (!path_in_table(d, path)) {
+            f = filp_open(path, O_RDONLY, 0);
+            if (!IS_ERR(f)) {
+                filp_close(f, NULL);
+                strscpy(d->temp_paths[d->temp_path_count], path, MAX_PATH_LEN);
+                snprintf(d->temp_names[d->temp_path_count], MAX_NAME_LEN, "apex_%d", n);
+                d->temp_path_count++;
+            }
         }
     }
 }
@@ -221,13 +234,17 @@ static void discover_nvme_paths(struct aux_sensor_data *d)
 
             snprintf(path, sizeof(path),
                      "/sys/class/nvme/nvme%d/hwmon%d/temp1_input", n, h);
-            f = filp_open(path, O_RDONLY, 0);
-            if (!IS_ERR(f)) {
-                filp_close(f, NULL);
-                strscpy(d->temp_paths[d->temp_path_count], path, MAX_PATH_LEN);
-                snprintf(d->temp_names[d->temp_path_count], MAX_NAME_LEN, "nvme%d", n);
-                d->temp_path_count++;
-                break;   /* found hwmon for this drive; move to next nvme */
+            if (!path_in_table(d, path)) {
+                f = filp_open(path, O_RDONLY, 0);
+                if (!IS_ERR(f)) {
+                    filp_close(f, NULL);
+                    strscpy(d->temp_paths[d->temp_path_count], path, MAX_PATH_LEN);
+                    snprintf(d->temp_names[d->temp_path_count], MAX_NAME_LEN, "nvme%d", n);
+                    d->temp_path_count++;
+                    break;   /* found hwmon for this drive; move to next nvme */
+                }
+            } else {
+                break;   /* already tracked this drive; move to next nvme */
             }
         }
     }
@@ -236,12 +253,12 @@ static void discover_nvme_paths(struct aux_sensor_data *d)
 static void discover_all_paths(struct aux_sensor_data *d)
 {
     int i;
+    int prev = d->temp_path_count;
 
-    d->temp_path_count = 0;
     discover_apex_paths(d);
     discover_nvme_paths(d);
 
-    for (i = 0; i < d->temp_path_count; i++)
+    for (i = prev; i < d->temp_path_count; i++)
         dev_info(d->dev, "discovered %s temperature source\n",
                  d->temp_names[i]);
 }
@@ -434,8 +451,15 @@ static void aux_poll_fn(struct work_struct *work)
     }
 
     /* ── Aux sources (Apex + NVMe) ── */
-    if (!d->temp_path_count)
+    if (d->source_discover_retries < SOURCE_DISCOVER_MAX_RETRIES) {
+        int prev = d->temp_path_count;
         discover_all_paths(d);
+        if (d->temp_path_count > prev)
+            d->source_discover_retries = 0;  /* new device found — keep searching */
+        else if (++d->source_discover_retries == SOURCE_DISCOVER_MAX_RETRIES)
+            dev_info(d->dev, "source discovery complete: %d source(s) found\n",
+                     d->temp_path_count);
+    }
 
     for (i = 0; i < d->temp_path_count; i++) {
         int v = read_int_from_sysfs(d->temp_paths[i]);
