@@ -98,18 +98,69 @@ No user-space daemon is required.
 | `Kbuild` | Kernel build descriptor for the module |
 | `Makefile` | Build and install rules |
 
-## Requirements
-
-- Raspberry Pi 5
-- Raspberry Pi OS (Debian 12 Bookworm or Debian 13 Trixie)
-- Kernel headers: `sudo apt install raspberrypi-kernel-headers`
-- Device tree compiler: `sudo apt install device-tree-compiler`
-
 ## Installation
 
+### Option 1 — CPU cooling only (pre-built overlay, no compilation)
+
+If you only need CPU-driven fan control and do not have an NVMe or Coral TPU,
+you can drop in the pre-built overlay without installing any kernel module.
+
+1. Download `x-fan40.dtbo` from the [latest release](https://github.com/dacarson/x-fan40-kernel/releases/latest).
+2. Copy it to the overlays directory:
+
 ```bash
+sudo cp x-fan40.dtbo /boot/firmware/overlays/
+```
+
+3. Add the overlay to `/boot/firmware/config.txt`:
+
+```bash
+echo "dtoverlay=x-fan40" | sudo tee -a /boot/firmware/config.txt
+```
+
+4. Reboot.
+
+### Option 2 — Full install with NVMe / Coral TPU support (DKMS)
+
+DKMS rebuilds the kernel module automatically after kernel updates.
+
+```bash
+# Install prerequisites
+sudo apt install dkms raspberrypi-kernel-headers device-tree-compiler
+
+# Clone and install
+git clone https://github.com/dacarson/x-fan40-kernel.git
+cd x-fan40-kernel
+sudo make install-overlay   # installs pre-built overlay and edits config.txt
+sudo make install-dkms      # registers and builds the module via DKMS
+
+# Reboot to activate the overlay
+sudo reboot
+```
+
+After reboot, load the module and configure it to load automatically:
+
+```bash
+sudo modprobe x-fan40-aux-thermal
+echo "x-fan40-aux-thermal" | sudo tee /etc/modules-load.d/x-fan40-aux.conf
+```
+
+To remove:
+
+```bash
+sudo make uninstall-dkms
+sudo make uninstall
+sudo reboot
+```
+
+### Option 3 — Build from source
+
+```bash
+# Prerequisites
+sudo apt install raspberrypi-kernel-headers device-tree-compiler
+
 # Clone the repository
-git clone git@github.com:dacarson/x-fan40-kernel.git
+git clone https://github.com/dacarson/x-fan40-kernel.git
 cd x-fan40-kernel
 
 # Build the device tree overlay and kernel module
@@ -133,6 +184,12 @@ To load it automatically at boot:
 ```bash
 echo "x-fan40-aux-thermal" | sudo tee /etc/modules-load.d/x-fan40-aux.conf
 ```
+
+## Requirements
+
+- Raspberry Pi 5
+- Raspberry Pi OS (Debian 12 Bookworm or Debian 13 Trixie)
+- For build/DKMS: `sudo apt install raspberrypi-kernel-headers device-tree-compiler`
 
 ## Kernel module: x-fan40-aux-thermal
 
@@ -241,14 +298,24 @@ See [ADDING-SOURCES.md](ADDING-SOURCES.md) for a step-by-step guide.
 
 ## Uninstall
 
+For DKMS installs:
+
+```bash
+sudo make uninstall-dkms
+sudo make uninstall
+sudo reboot
+```
+
+For source/manual installs:
+
 ```bash
 sudo make uninstall
 sudo reboot
 ```
 
-This removes the `.dtbo` file, the `dtoverlay=x-fan40` line from
-`/boot/firmware/config.txt`, and unloads the kernel module. Remove the
-module auto-load conf manually if added:
+`make uninstall` removes the `.dtbo` file and the `dtoverlay=x-fan40` line
+from `/boot/firmware/config.txt`. Remove the module auto-load conf manually
+if added:
 
 ```bash
 sudo rm /etc/modules-load.d/x-fan40-aux.conf

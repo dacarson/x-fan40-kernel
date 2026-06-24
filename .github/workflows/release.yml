@@ -1,0 +1,41 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-overlay:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y device-tree-compiler linux-headers-generic
+
+      - name: Build device tree overlay
+        run: |
+          KDIR=$(ls -d /usr/src/linux-headers-*-generic | sort -V | tail -1)
+          cpp -nostdinc -I "$KDIR/include" -undef -x assembler-with-cpp \
+            x-fan40-overlay.dts | dtc -I dts -O dtb -@ -o x-fan40.dtbo -
+
+      - name: Upload overlay artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: x-fan40-dtbo
+          path: x-fan40.dtbo
+
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: x-fan40.dtbo
+          generate_release_notes: true

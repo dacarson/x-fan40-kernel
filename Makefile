@@ -6,7 +6,7 @@ OVERLAY_DIR := /boot/firmware/overlays
 CONFIG      := /boot/firmware/config.txt
 KDIR        := /lib/modules/$(shell uname -r)/build
 
-.PHONY: all overlay module test install install-module uninstall clean
+.PHONY: all overlay module test install install-module install-dkms uninstall uninstall-dkms clean
 
 all: overlay module
 
@@ -50,6 +50,24 @@ install-module:
 	sudo $(MAKE) -C $(KDIR) M=$(CURDIR) modules_install
 	sudo depmod -a
 	@echo "Module installed. Load with: sudo modprobe x-fan40-aux-thermal"
+
+# ── DKMS ─────────────────────────────────────────────────────────────────────
+
+DKMS_PKG := x-fan40
+DKMS_SRC := /usr/src/$(DKMS_PKG)-$(VERSION)
+
+install-dkms:
+	sudo mkdir -p $(DKMS_SRC)
+	sudo cp -r . $(DKMS_SRC)/
+	sudo dkms add $(DKMS_PKG)/$(VERSION)
+	sudo dkms build $(DKMS_PKG)/$(VERSION)
+	sudo dkms install $(DKMS_PKG)/$(VERSION)
+	@echo "DKMS module installed. Load with: sudo modprobe x-fan40-aux-thermal"
+
+uninstall-dkms:
+	sudo dkms remove $(DKMS_PKG)/$(VERSION) --all || true
+	sudo rm -rf $(DKMS_SRC)
+	@echo "DKMS module removed."
 
 # ── Uninstall ──────────────────────────────────────────────────────────────
 
