@@ -25,7 +25,7 @@
 //   fan_driver — zone driving the fan: "cpu", source name, or "none"
 //
 // fan_driver is determined by comparing the actual fan_state with the maximum
-// state the aux zone could demand at the current aux_temp_mc.  If fan_state
+// state the aux zone could demand at the current aux_temp.  If fan_state
 // exceeds that maximum, the CPU zone must be responsible.
 //
 // Fan detection: the fan is spun up briefly and the tachometer read after two
@@ -72,6 +72,9 @@
 #define AUX_TRIP_LO_MAX_STATE  3
 #define AUX_TRIP_HI_MAX_STATE  5
 
+static const char str_none[] = "none";
+static const char str_cpu[]  = "cpu";
+
 static unsigned int poll_ms = POLL_MS_DEFAULT;
 module_param(poll_ms, uint, 0644);
 MODULE_PARM_DESC(poll_ms, "Temperature poll interval in milliseconds");
@@ -83,13 +86,13 @@ MODULE_VERSION(MODULE_VER);
 
 struct aux_sensor_data {
     /* Aux zone temperatures (Apex + NVMe) — drive the thermal zone */
-    int  aux_temp_mc;
-    char source_name[MAX_NAME_LEN];
+    int         aux_temp;
+    const char *source_name;     /* points into temp_names[], or str_none */
 
     /* Fan state */
-    int  fan_state;                       /* actual pwm-fan cur_state */
-    char fan_driver_name[MAX_NAME_LEN];   /* "cpu", source name, or "none" */
-    char fan_cdev_state_path[MAX_CDEV_PATH_LEN];
+    int         fan_state;                      /* actual pwm-fan cur_state */
+    const char *fan_driver_name;                /* str_cpu, str_none, or temp_names[i] */
+    char        fan_cdev_state_path[MAX_CDEV_PATH_LEN];
 
     /* Fan detection — performed once after fan devices are found */
     bool fan_present;
@@ -118,7 +121,7 @@ struct aux_sensor_data {
 static int aux_get_temp(struct thermal_zone_device *tz, int *temp)
 {
     struct aux_sensor_data *d = thermal_zone_device_priv(tz);
-    *temp = d->aux_temp_mc;
+    *temp = d->aux_temp;
     return 0;
 }
 
@@ -469,10 +472,10 @@ static void aux_poll_fn(struct work_struct *work)
         }
     }
 
-    if (max_idx >= 0 && (max_temp != d->aux_temp_mc ||
-        strncmp(d->source_name, d->temp_names[max_idx], MAX_NAME_LEN) != 0)) {
-        d->aux_temp_mc = max_temp;
-        strscpy(d->source_name, d->temp_names[max_idx], MAX_NAME_LEN);
+    if (max_idx >= 0 && (max_temp != d->aux_temp ||
+        d->source_name != d->temp_names[max_idx])) {
+        d->aux_temp = max_temp;
+        d->source_name = d->temp_names[max_idx];
         thermal_zone_device_update(d->tz, THERMAL_EVENT_UNSPECIFIED);
     }
 
@@ -482,7 +485,7 @@ static void aux_poll_fn(struct work_struct *work)
         if (cur != INT_MIN) {
             /*
              * Determine the maximum cooling state the aux zone can demand
-             * at the current aux_temp_mc, based on the DT cooling maps:
+             * at the current aux_temp, based on the DT cooling maps:
              *   aux_trip_lo → states 1..AUX_TRIP_LO_MAX_STATE
              *   aux_trip_hi → states 1..AUX_TRIP_HI_MAX_STATE
              * If the actual fan state exceeds this maximum, the CPU zone
@@ -490,9 +493,9 @@ static void aux_poll_fn(struct work_struct *work)
              */
             int aux_max;
 
-            if (d->aux_temp_mc >= d->aux_trip_hi_temp)
+            if (d->aux_temp >= d->aux_trip_hi_temp)
                 aux_max = AUX_TRIP_HI_MAX_STATE;
-            else if (d->aux_temp_mc >= d->aux_trip_lo_temp)
+            else if (d->aux_temp >= d->aux_trip_lo_temp)
                 aux_max = AUX_TRIP_LO_MAX_STATE;
             else
                 aux_max = 0;
@@ -500,11 +503,11 @@ static void aux_poll_fn(struct work_struct *work)
             d->fan_state = cur;
 
             if (cur == 0)
-                strscpy(d->fan_driver_name, "none", MAX_NAME_LEN);
+                d->fan_driver_name = str_none;
             else if (cur > aux_max)
-                strscpy(d->fan_driver_name, "cpu", MAX_NAME_LEN);
+                d->fan_driver_name = str_cpu;
             else
-                strscpy(d->fan_driver_name, d->source_name, MAX_NAME_LEN);
+                d->fan_driver_name = d->source_name;
         }
     }
 
@@ -517,7 +520,7 @@ static ssize_t aux_temp_show(struct device *dev,
                               struct device_attribute *attr, char *buf)
 {
     struct aux_sensor_data *d = dev_get_drvdata(dev);
-    return sysfs_emit(buf, "%d\n", d->aux_temp_mc);
+    return sysfs_emit(buf, "%d\n", d->aux_temp);
 }
 static DEVICE_ATTR_RO(aux_temp);
 
@@ -565,11 +568,11 @@ static int aux_probe(struct platform_device *pdev)
     if (!d)
         return -ENOMEM;
 
-    d->aux_temp_mc      = SAFE_TEMP_MC;
+    d->aux_temp      = SAFE_TEMP_MC;
     d->aux_trip_lo_temp = 55000;   /* overwritten by discover_aux_zone_trips */
     d->aux_trip_hi_temp = 80000;
-    strscpy(d->source_name,     "none", MAX_NAME_LEN);
-    strscpy(d->fan_driver_name, "none", MAX_NAME_LEN);
+    d->source_name      = str_none;
+    d->fan_driver_name  = str_none;
     d->dev = &pdev->dev;
     dev_set_drvdata(&pdev->dev, d);
 
