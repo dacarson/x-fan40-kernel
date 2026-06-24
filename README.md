@@ -53,6 +53,8 @@ once that trip fires:
 | cpu | 67.5 °C | 3–4 | Fan steps up to medium-high |
 | cpu | 75 °C | 5–5 | Fan goes to full |
 
+> **Note:** The cpu-thermal zone also contains a `critical` trip at ~110 °C from the Pi 5 base device tree that triggers an emergency thermal shutdown. x-fan40 does not modify that trip point; the 5 trips above are the only ones relevant to fan control.
+
 - **Below the trip temperature** — the zone requests state 0 (off).
 - **At or above the trip temperature** — the governor starts at the minimum
   state for that range and steps up one state per poll cycle while the
@@ -65,6 +67,19 @@ The kernel applies **max-wins arbitration** across all zones: whichever zone
 demands a higher state wins. For example, if the CPU zone wants state 4 but the
 aux zone only wants state 2, the fan runs at state 4. The `fan_driver` sysfs
 attribute reports which zone is responsible.
+
+### Thermal zones
+
+A *thermal zone* pairs a temperature sensor with one or more cooling devices, a governor, and a set of trip points — temperature thresholds that trigger cooling actions. The Raspberry Pi 5 has two thermal zones when x-fan40 is installed:
+
+| sysfs path | Zone type | Sensor | Managed by |
+|------------|-----------|--------|------------|
+| `thermal_zone0` | `cpu-thermal` | BCM2712 SoC | Pi 5 base DT, extended by fragment 3 |
+| `thermal_zone1` | `x-fan40-aux` | Coral TPU / NVMe max | Fragment 5 + `x-fan40-aux-thermal.ko` |
+
+`cpu-thermal` is the Pi 5's pre-existing zone. Its base device tree already defines multiple active trips (at 50 °C, 67.5 °C, and 75 °C) plus a `critical` trip at ~110 °C for emergency shutdown. Fragment 3 injects two new labeled trip nodes at 67.5 °C and 75 °C alongside the existing unlabeled ones — DT labels are required to reference trips in cooling maps — bringing the total to 7 trip points in that zone (6 `active` + 1 `critical`).
+
+`x-fan40-aux` is a new zone created entirely by this project (fragment 5). It has exactly 2 trip points, both `active`, because auxiliary devices only need fan assistance; no CPU throttling or emergency shutdown is tied to their temperature.
 
 ### Architecture
 
@@ -254,6 +269,22 @@ cat /sys/devices/platform/x-fan40-aux-sensor/fan_driver
 
 ## sysfs layout after install
 
+### Thermal zones
+
+```
+/sys/class/thermal/thermal_zone0/          (cpu-thermal — Pi 5 base zone, extended by fragment 3)
+  type                → "cpu-thermal"
+  temp                → current CPU temperature in milli-Celsius
+  trip_point_{0-5}_type  → "active"       (6 trips: 50 °C, 67.5 °C × 2, 75 °C × 2, plus base DT trips)
+  trip_point_6_type   → "critical"        (~110 °C emergency shutdown, from Pi 5 base DT)
+
+/sys/class/thermal/thermal_zone1/          (x-fan40-aux — new zone, created by fragment 5)
+  type                → "x-fan40-aux"
+  temp                → hottest Coral TPU / NVMe temperature in milli-Celsius
+  trip_point_0_type   → "active"          (55 °C — fan states 1–3)
+  trip_point_1_type   → "active"          (80 °C — fan states 4–5)
+```
+
 The `pwm-fan` driver registers an hwmon device, so the fan appears alongside
 the Pi's built-in sensors under `/sys/class/hwmon/`:
 
@@ -331,15 +362,8 @@ runs `cpp` with the kernel include path automatically.
 
 **Module loads but `aux_temp` sysfs attribute is missing**
 
-The DT overlay must be active before the module is loaded. Confirm with:
-
-```bash
-dtoverlay -l | grep x-fan40
-```
-
-On Pi 5 with kernel 6.12, `dtoverlay -l` does not list overlays applied
-at boot time via `config.txt`, even when they are working correctly.
-Verify the overlay is active by checking for its sysfs devices instead:
+The DT overlay must be active before the module is loaded. Verify the overlay 
+is active by checking for its sysfs devices instead:
 
 ```bash
 ls /sys/devices/platform/x-fan/hwmon/
@@ -351,8 +375,12 @@ If those paths are missing, check `/boot/firmware/config.txt` for
 
 **`source` reads `none` after module load**
 
-No Apex or NVMe devices were found at probe time. Check that the Apex and
-NVMe drivers are loaded:
+If no NVMe drive or Coral TPU is installed, `source` reading `none` is
+correct — the aux zone has no heat sources to monitor and the fan will be
+driven by the CPU zone alone.
+
+If you do have an NVMe or Coral TPU and `source` still reads `none`, the
+device drivers may not have loaded yet. Check:
 
 ```bash
 ls /sys/class/apex/
