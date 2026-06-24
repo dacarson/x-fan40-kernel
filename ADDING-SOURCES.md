@@ -97,9 +97,24 @@ sudo modprobe -r x-fan40-aux-thermal
 sudo modprobe x-fan40-aux-thermal
 ```
 
-Confirm the new device appears:
+Confirm the new device was discovered:
+
+```bash
+dmesg | grep x-fan40
+# → x-fan40-aux-thermal x-fan40-aux-sensor: discovered mydev0 temperature source
+```
+
+The module logs a line for every source it finds. If the line is missing,
+the sysfs path was not readable at load time — check the path and that the
+device driver is loaded.
+
+You can also check the current hottest source and temperature:
 
 ```bash
 cat /sys/devices/platform/x-fan40-aux-sensor/source
-cat /sys/devices/platform/x-fan40-aux-sensor/aux_temp_mc
+cat /sys/devices/platform/x-fan40-aux-sensor/aux_temp
 ```
+
+Note that `source` shows only the *hottest* device at that moment, so if
+another source is currently warmer your new device will not appear there
+even when it is working correctly.
