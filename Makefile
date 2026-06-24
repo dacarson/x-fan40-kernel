@@ -1,4 +1,4 @@
-VERSION     := 1.0.1
+VERSION     := 1.0.2
 OVERLAY     := x-fan40
 DTS         := $(OVERLAY)-overlay.dts
 DTBO        := $(OVERLAY).dtbo
